@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: malscan-config
+  namespace: malscan
+data:
+  MINIO_ENDPOINT: "minio.malscan.svc.cluster.local:9000"
+  MINIO_BUCKET_UPLOADS: "uploads"
+  MINIO_BUCKET_ARTIFACTS: "artifacts"
+  MINIO_SECURE: "false"
+  RABBITMQ_HOST: "rabbitmq.malscan.svc.cluster.local"
+  RABBITMQ_QUEUE: "malscan.jobs"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  STAGES_TOTAL: "5"
+  SANDBOX_ENABLED: "true"
+  SANDBOX_MOCK: "true"
+  YARA_RULES_PATH: "/etc/yara/rules"
+  CLAMSCAN_PATH: "/usr/bin/clamscan"
+  STAGE_TIMEOUT_SECONDS: "300"
+  METRICS_PORT: "9090"

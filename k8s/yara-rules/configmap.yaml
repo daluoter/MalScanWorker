@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yara-rules
+  namespace: malscan
+data:
+  suspicious_strings.yar: |
+    rule suspicious_api_calls {
+      meta:
+        description = "Detects suspicious Windows API calls"
+        severity = "medium"
+      strings:
+        $api1 = "VirtualAlloc" ascii
+        $api2 = "WriteProcessMemory" ascii
+        $api3 = "CreateRemoteThread" ascii
+        $api4 = "NtCreateThreadEx" ascii
+        $api5 = "RtlCreateUserThread" ascii
+      condition:
+        2 of them
+    }
+
+    rule persistence_registry {
+      meta:
+        description = "Detects registry persistence mechanisms"
+        severity = "high"
+      strings:
+        $reg1 = "CurrentVersion\\Run" ascii nocase
+        $reg2 = "CurrentVersion\\RunOnce" ascii nocase
+        $reg3 = "Winlogon\\Shell" ascii nocase
+      condition:
+        any of them
+    }
+
+  network_indicators.yar: |
+    rule network_iocs {
+      meta:
+        description = "Network behavior indicators"
+      strings:
+        $http = "http://" ascii
+        $https = "https://" ascii
+      condition:
+        any of them
+    }

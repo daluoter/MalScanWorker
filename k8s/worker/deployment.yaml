@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: malscan-worker
+  namespace: malscan
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: malscan-worker
+  template:
+    metadata:
+      labels:
+        app: malscan-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: worker
+          image: ghcr.io/OWNER/malscan-worker:latest
+          ports:
+            - containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: malscan-config
+            - secretRef:
+                name: malscan-secrets
+          volumeMounts:
+            - name: yara-rules
+              mountPath: /etc/yara/rules
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          securityContext:
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+      volumes:
+        - name: yara-rules
+          configMap:
+            name: yara-rules
+        - name: tmp
+          emptyDir: {}
