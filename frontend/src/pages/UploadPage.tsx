@@ -2,14 +2,14 @@ import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiClient } from '../api/client'
 
+const MAX_SIZE = 20 * 1024 * 1024 // 20MB
+
 export default function UploadPage() {
     const navigate = useNavigate()
     const [file, setFile] = useState<File | null>(null)
     const [isDragging, setIsDragging] = useState(false)
     const [isUploading, setIsUploading] = useState(false)
     const [error, setError] = useState<string | null>(null)
-
-    const MAX_SIZE = 20 * 1024 * 1024 // 20MB
 
     const handleFile = useCallback((selectedFile: File) => {
         if (selectedFile.size > MAX_SIZE) {
