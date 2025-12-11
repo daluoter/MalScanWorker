@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
     rabbitmq_queue: str = "malscan.jobs"
 
-    # CORS
-    cors_origins: str = "http://localhost:5173"
+    # CORS (use * for development, restrict in production via env var)
+    cors_origins: str = "*"
 
     # Logging
     log_level: str = "INFO"
