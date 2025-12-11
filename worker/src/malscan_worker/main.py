@@ -1,7 +1,6 @@
 """Worker main entry point."""
 
 import asyncio
-import os
 import signal
 import sys
 

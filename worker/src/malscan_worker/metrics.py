@@ -1,8 +1,13 @@
 """Prometheus metrics server for worker."""
 
 from aiohttp import web
-from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
-
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 # Metrics definitions
 job_total = Counter(

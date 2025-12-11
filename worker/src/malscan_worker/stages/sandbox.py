@@ -50,7 +50,10 @@ class SandboxStage(Stage):
             # Generate mock behavior data
             mock_behaviors = [
                 {"type": "file_write", "path": "C:\\Windows\\Temp\\sample.dll"},
-                {"type": "registry_read", "key": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion"},
+                {
+                    "type": "registry_read",
+                    "key": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion",
+                },
             ]
 
             mock_network = [

@@ -1,7 +1,6 @@
 """Pipeline orchestrator for running analysis stages."""
 
 import asyncio
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,11 +10,11 @@ import structlog
 from malscan_worker.config import get_settings
 from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.base import StageContext, StageResult
-from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.clamav import ClamAVStage
-from malscan_worker.stages.yara_scan import YaraStage
+from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
 from malscan_worker.stages.sandbox import SandboxStage
+from malscan_worker.stages.yara_scan import YaraStage
 
 log = structlog.get_logger()
 settings = get_settings()

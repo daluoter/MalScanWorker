@@ -2,14 +2,13 @@
 
 import asyncio
 import json
-from typing import Any
 
 import aio_pika
 import structlog
 
 from malscan_worker.config import get_settings
-from malscan_worker.pipeline import run_pipeline
 from malscan_worker.metrics import job_total, worker_active_jobs
+from malscan_worker.pipeline import run_pipeline
 
 log = structlog.get_logger()
 settings = get_settings()

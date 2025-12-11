@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 
-
 # IOC patterns
 URL_PATTERN = re.compile(
     rb'https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s\x00-\x1f"\'<>]*',
@@ -19,7 +18,8 @@ DOMAIN_PATTERN = re.compile(
 )
 
 IP_PATTERN = re.compile(
-    rb'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+    rb'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
+    rb'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
 )
 
 
@@ -41,10 +41,10 @@ class IocExtractStage(Stage):
             content = ctx.file_path.read_bytes()
 
             # Extract URLs
-            urls = list(set(
+            urls = list({
                 match.decode("utf-8", errors="ignore")
                 for match in URL_PATTERN.findall(content)
-            ))[:100]  # Limit to 100
+            })[:100]  # Limit to 100
 
             # Extract domains (excluding URLs)
             url_domains = set()
@@ -57,11 +57,11 @@ class IocExtractStage(Stage):
                 except Exception:
                     pass
 
-            domains = list(set(
+            domains = list({
                 match.decode("utf-8", errors="ignore").lower()
                 for match in DOMAIN_PATTERN.findall(content)
                 if match.decode("utf-8", errors="ignore").lower() not in url_domains
-            ))[:100]
+            })[:100]
 
             # Filter out common non-malicious domains
             common_domains = {
@@ -71,10 +71,10 @@ class IocExtractStage(Stage):
             domains = [d for d in domains if d not in common_domains]
 
             # Extract IPs
-            ips = list(set(
+            ips = list({
                 match.decode("utf-8", errors="ignore")
                 for match in IP_PATTERN.findall(content)
-            ))[:50]
+            })[:50]
 
             # Filter out private/local IPs
             def is_public_ip(ip: str) -> bool:

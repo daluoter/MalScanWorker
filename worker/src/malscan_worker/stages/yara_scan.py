@@ -1,7 +1,6 @@
 """YARA scanning stage using yara CLI."""
 
 import asyncio
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
