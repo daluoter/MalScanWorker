@@ -3,10 +3,10 @@
 import hashlib
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Any
 
 import structlog
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 
 from malscan.config import get_settings
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
@@ -17,9 +17,7 @@ log = structlog.get_logger()
 
 
 @router.post("/files", response_model=UploadResponse, status_code=201)
-async def upload_file(
-    file: Annotated[UploadFile, File(description="File to upload for malware analysis")]
-) -> UploadResponse:
+async def upload_file(file: UploadFile) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
