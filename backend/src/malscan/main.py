@@ -20,6 +20,9 @@ structlog.configure(
 settings = get_settings()
 log = structlog.get_logger()
 
+# Increase max request body size for file uploads (50MB)
+MAX_REQUEST_BODY_SIZE = 50 * 1024 * 1024  # 50MB
+
 app = FastAPI(
     title="MalScan API",
     description="惡意檔案分析 Pipeline API",

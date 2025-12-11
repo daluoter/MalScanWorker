@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 
 from malscan.config import get_settings
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
@@ -17,7 +17,7 @@ log = structlog.get_logger()
 
 
 @router.post("/files", response_model=UploadResponse, status_code=201)
-async def upload_file(file: UploadFile) -> UploadResponse:
+async def upload_file(request: Request) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -28,14 +28,26 @@ async def upload_file(file: UploadFile) -> UploadResponse:
     - Returns job_id immediately (async processing)
     """
     try:
+        # Parse multipart form manually to handle large files
+        form = await request.form()
+        file = form.get("file")
+
+        if file is None:
+            raise HTTPException(
+                status_code=422,
+                detail="No file field in form data",
+            )
+
         # Read file content
         content = await file.read()
         file_size = len(content)
+        filename = getattr(file, "filename", "unknown")
+        content_type = getattr(file, "content_type", "application/octet-stream")
 
         log.info(
             "file_upload_started",
-            filename=file.filename,
-            content_type=file.content_type,
+            filename=filename,
+            content_type=content_type,
             size=file_size,
         )
 
@@ -68,7 +80,7 @@ async def upload_file(file: UploadFile) -> UploadResponse:
             file_id=file_id,
             sha256=sha256_hash,
             size=file_size,
-            filename=file.filename,
+            filename=filename,
         )
 
         # TODO: Store file in MinIO
