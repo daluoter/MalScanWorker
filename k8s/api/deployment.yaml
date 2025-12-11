@@ -23,6 +23,7 @@ spec:
       containers:
         - name: api
           image: ghcr.io/OWNER/malscan-api:latest
+          imagePullPolicy: Never
           ports:
             - containerPort: 8000
           envFrom:

@@ -16,7 +16,30 @@ settings = get_settings()
 log = structlog.get_logger()
 
 
-@router.post("/files", response_model=UploadResponse, status_code=201)
+@router.post(
+    "/files",
+    response_model=UploadResponse,
+    status_code=201,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "file": {
+                                "type": "string",
+                                "format": "binary",
+                                "description": "File to upload for malware analysis",
+                            }
+                        },
+                        "required": ["file"],
+                    }
+                }
+            }
+        }
+    },
+)
 async def upload_file(request: Request) -> UploadResponse:
     """
     Upload a file for malware analysis.
