@@ -20,6 +20,14 @@ User → GitHub Pages (React) → FastAPI → MinIO + Supabase + RabbitMQ
 - [Supabase](https://supabase.com/) 專案（免費方案即可）
 - GitHub 帳號（用於 GHCR 和 GitHub Pages）
 
+> ⚠️ **VirtualBox 網路設定注意事項**
+>
+> VirtualBox 預設使用 NAT 模式，這會導致外部無法連線到 VM（包括 `http://VM_IP:30080`）。
+>
+> **解決方法：** 將 VirtualBox 網路介面卡改為「**Bridged Adapter（橋接介面卡）**」
+>
+> 設定步驟：VM 設定 → 網路 → 介面卡 1 → 附加到：選擇「Bridged Adapter」
+
 ---
 
 ## 完整部署步驟
