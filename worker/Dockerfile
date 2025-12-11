@@ -29,6 +29,9 @@ COPY src/ ./src/
 # Copy YARA rules (if any)
 COPY rules/ /etc/yara/rules/
 
+# Set PYTHONPATH so Python can find the malscan_worker module
+ENV PYTHONPATH=/app/src
+
 # Expose metrics port
 EXPOSE 9090
 

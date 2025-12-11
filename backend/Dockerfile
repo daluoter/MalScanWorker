@@ -15,6 +15,9 @@ RUN poetry config virtualenvs.create false \
 # Copy source code
 COPY src/ ./src/
 
+# Set PYTHONPATH so Python can find the malscan module
+ENV PYTHONPATH=/app/src
+
 # Expose port
 EXPOSE 8000
 
