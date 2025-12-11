@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import APIRouter, HTTPException, Request
 
 from malscan.config import get_settings
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
