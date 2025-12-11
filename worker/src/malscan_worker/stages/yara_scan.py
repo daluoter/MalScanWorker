@@ -86,8 +86,8 @@ class YaraStage(Stage):
                                 current_rule = {
                                     "rule": parts[0],
                                     "namespace": rule_file.stem,
-                                    "tags": [],
-                                    "strings": [],
+                                    "tags": [],  # type: ignore[var-annotated]
+                                    "strings": [],  # type: ignore[var-annotated]
                                 }
                                 matches.append(current_rule)
                         else:

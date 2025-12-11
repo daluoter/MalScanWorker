@@ -18,7 +18,7 @@ MAX_RETRIES = 30
 RETRY_DELAY = 5  # seconds
 
 
-async def process_message(message: aio_pika.IncomingMessage) -> None:
+async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:
     """Process a single job message."""
     async with message.process():
         try:
@@ -57,7 +57,7 @@ async def process_message(message: aio_pika.IncomingMessage) -> None:
             # Don't requeue invalid messages
 
 
-async def connect_with_retry() -> aio_pika.RobustConnection:
+async def connect_with_retry() -> aio_pika.abc.AbstractRobustConnection:
     """Connect to RabbitMQ with retry logic."""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
