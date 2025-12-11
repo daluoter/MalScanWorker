@@ -14,6 +14,10 @@ from malscan_worker.metrics import job_total, worker_active_jobs
 log = structlog.get_logger()
 settings = get_settings()
 
+# Connection retry settings
+MAX_RETRIES = 30
+RETRY_DELAY = 5  # seconds
+
 
 async def process_message(message: aio_pika.IncomingMessage) -> None:
     """Process a single job message."""
@@ -54,10 +58,37 @@ async def process_message(message: aio_pika.IncomingMessage) -> None:
             # Don't requeue invalid messages
 
 
+async def connect_with_retry() -> aio_pika.RobustConnection:
+    """Connect to RabbitMQ with retry logic."""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            connection = await aio_pika.connect_robust(settings.rabbitmq_url)
+            log.info("rabbitmq_connected", attempt=attempt)
+            return connection
+        except Exception as e:
+            if attempt == MAX_RETRIES:
+                log.error(
+                    "rabbitmq_connection_failed",
+                    error=str(e),
+                    max_retries=MAX_RETRIES,
+                )
+                raise
+            log.warning(
+                "rabbitmq_connection_retry",
+                attempt=attempt,
+                max_retries=MAX_RETRIES,
+                error=str(e),
+                retry_in=RETRY_DELAY,
+            )
+            await asyncio.sleep(RETRY_DELAY)
+
+    # This should never be reached
+    raise RuntimeError("Failed to connect to RabbitMQ")
+
+
 async def start_consumer(shutdown_event: asyncio.Event) -> None:
     """Start consuming messages from RabbitMQ."""
-    connection = await aio_pika.connect_robust(settings.rabbitmq_url)
-    log.info("rabbitmq_connected")
+    connection = await connect_with_retry()
 
     async with connection:
         channel = await connection.channel()
