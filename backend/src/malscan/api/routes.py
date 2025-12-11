@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile, Form
+from fastapi.responses import JSONResponse
 
 from malscan.config import get_settings
 from malscan.schemas.requests import UploadResponse, JobStatusResponse, ReportResponse
@@ -17,7 +18,7 @@ log = structlog.get_logger()
 
 
 @router.post("/files", response_model=UploadResponse, status_code=201)
-async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
+async def upload_file(file: UploadFile = File(..., description="File to analyze")) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -27,54 +28,76 @@ async def upload_file(file: UploadFile = File(...)) -> UploadResponse:
     - Publishes job to RabbitMQ
     - Returns job_id immediately (async processing)
     """
-    # Read file content
-    content = await file.read()
-    file_size = len(content)
+    try:
+        # Read file content
+        content = await file.read()
+        file_size = len(content)
 
-    # Check size limit
-    if file_size > settings.max_file_size:
+        log.info(
+            "file_upload_started",
+            filename=file.filename,
+            content_type=file.content_type,
+            size=file_size,
+        )
+
+        # Check size limit
+        if file_size > settings.max_file_size:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "FILE_TOO_LARGE",
+                        "message": f"File size exceeds {settings.max_file_size} bytes limit",
+                        "details": {
+                            "max_size_bytes": settings.max_file_size,
+                            "actual_size_bytes": file_size,
+                        },
+                    }
+                },
+            )
+
+        # Calculate hash
+        sha256_hash = hashlib.sha256(content).hexdigest()
+
+        # Generate IDs
+        file_id = str(uuid.uuid4())
+        job_id = str(uuid.uuid4())
+
+        log.info(
+            "file_uploaded",
+            job_id=job_id,
+            file_id=file_id,
+            sha256=sha256_hash,
+            size=file_size,
+            filename=file.filename,
+        )
+
+        # TODO: Store file in MinIO
+        # TODO: Create file record in database (upsert by sha256)
+        # TODO: Create job record in database
+        # TODO: Publish job to RabbitMQ
+
+        return UploadResponse(
+            job_id=job_id,
+            file_id=file_id,
+            sha256=sha256_hash,
+            status="queued",
+            created_at=datetime.now(timezone.utc),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("file_upload_error", error=str(e))
         raise HTTPException(
-            status_code=400,
+            status_code=500,
             detail={
                 "error": {
-                    "code": "FILE_TOO_LARGE",
-                    "message": f"File size exceeds {settings.max_file_size} bytes limit",
-                    "details": {
-                        "max_size_bytes": settings.max_file_size,
-                        "actual_size_bytes": file_size,
-                    },
+                    "code": "INTERNAL_ERROR",
+                    "message": str(e),
                 }
             },
         )
-
-    # Calculate hash
-    sha256_hash = hashlib.sha256(content).hexdigest()
-
-    # Generate IDs
-    file_id = str(uuid.uuid4())
-    job_id = str(uuid.uuid4())
-
-    log.info(
-        "file_uploaded",
-        job_id=job_id,
-        file_id=file_id,
-        sha256=sha256_hash,
-        size=file_size,
-        filename=file.filename,
-    )
-
-    # TODO: Store file in MinIO
-    # TODO: Create file record in database (upsert by sha256)
-    # TODO: Create job record in database
-    # TODO: Publish job to RabbitMQ
-
-    return UploadResponse(
-        job_id=job_id,
-        file_id=file_id,
-        sha256=sha256_hash,
-        status="queued",
-        created_at=datetime.now(timezone.utc),
-    )
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
