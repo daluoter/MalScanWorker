@@ -6,11 +6,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, File, HTTPException, UploadFile, Form
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, UploadFile
 
 from malscan.config import get_settings
-from malscan.schemas.requests import UploadResponse, JobStatusResponse, ReportResponse
+from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
 
 router = APIRouter()
 settings = get_settings()
@@ -18,7 +17,7 @@ log = structlog.get_logger()
 
 
 @router.post("/files", response_model=UploadResponse, status_code=201)
-async def upload_file(file: UploadFile = File(..., description="File to analyze")) -> UploadResponse:
+async def upload_file(file: UploadFile) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -47,7 +46,7 @@ async def upload_file(file: UploadFile = File(..., description="File to analyze"
                 detail={
                     "error": {
                         "code": "FILE_TOO_LARGE",
-                        "message": f"File size exceeds {settings.max_file_size} bytes limit",
+                        "message": f"File size exceeds limit",
                         "details": {
                             "max_size_bytes": settings.max_file_size,
                             "actual_size_bytes": file_size,
@@ -97,7 +96,7 @@ async def upload_file(file: UploadFile = File(..., description="File to analyze"
                     "message": str(e),
                 }
             },
-        )
+        ) from e
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -140,7 +139,7 @@ async def get_report(job_id: str) -> dict[str, Any]:
         "job_id": job_id,
         "file": {
             "file_id": "mock-file-id",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991",
             "mime": "application/octet-stream",
             "size": 1024,
             "original_filename": "test.bin",
@@ -161,7 +160,7 @@ async def get_report(job_id: str) -> dict[str, Any]:
                 "hashes": {
                     "md5": "d41d8cd98f00b204e9800998ecf8427e",
                     "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-                    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "sha256": "e3b0c44298fc1c149afbf4c8996fb924",
                 },
             },
             "sandbox": {
