@@ -46,7 +46,7 @@ async def upload_file(file: UploadFile) -> UploadResponse:
                 detail={
                     "error": {
                         "code": "FILE_TOO_LARGE",
-                        "message": f"File size exceeds limit",
+                        "message": "File size exceeds limit",
                         "details": {
                             "max_size_bytes": settings.max_file_size,
                             "actual_size_bytes": file_size,
