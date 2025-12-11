@@ -15,8 +15,12 @@ RUN poetry config virtualenvs.create false \
 # Copy source code
 COPY src/ ./src/
 
+# Ensure /tmp is writable for multipart file uploads
+RUN mkdir -p /tmp && chmod 1777 /tmp
+
 # Set PYTHONPATH so Python can find the malscan module
 ENV PYTHONPATH=/app/src
+ENV TMPDIR=/tmp
 
 # Expose port
 EXPOSE 8000
