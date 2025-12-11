@@ -23,7 +23,11 @@ spec:
       containers:
         - name: api
           image: ghcr.io/OWNER/malscan-api:latest
-          imagePullPolicy: Never
+          # NOTE: Replace OWNER with your GitHub username
+          # For local development with k3s, you can use:
+          #   imagePullPolicy: Never (after importing local image)
+          # For production, use:
+          #   imagePullPolicy: IfNotPresent (default)
           ports:
             - containerPort: 8000
           envFrom:
@@ -33,7 +37,7 @@ spec:
                 name: malscan-secrets
           env:
             - name: CORS_ORIGINS
-              value: "https://OWNER.github.io"
+              value: "*"
           resources:
             requests:
               memory: "256Mi"

@@ -100,7 +100,15 @@ sudo kubectl create secret generic malscan-secrets \
   --from-literal=RABBITMQ_URL="amqp://guest:guest@rabbitmq:5672/"
 ```
 
-#### 5.3 修改 k8s manifests（替換 OWNER）
+#### 5.3 建立資料目錄（在 k3s 節點上）
+```bash
+# MinIO 和 RabbitMQ 需要持久化儲存
+sudo mkdir -p /data/malscan/minio
+sudo mkdir -p /data/malscan/rabbitmq
+sudo chmod 777 /data/malscan/minio /data/malscan/rabbitmq
+```
+
+#### 5.4 修改 k8s manifests（替換 OWNER）
 編輯以下檔案，將 `OWNER` 替換為你的 GitHub 帳號：
 - `k8s/api/deployment.yaml`
 - `k8s/worker/deployment.yaml`
@@ -111,17 +119,29 @@ sed -i 's/OWNER/YOUR_USERNAME/g' k8s/api/deployment.yaml
 sed -i 's/OWNER/YOUR_USERNAME/g' k8s/worker/deployment.yaml
 ```
 
-#### 5.4 部署所有資源
+#### 5.5 部署所有資源
 ```bash
+# 1. 建立 namespace 和 configmap
+sudo kubectl apply -f k8s/namespace.yaml
 sudo kubectl apply -f k8s/configmap.yaml
-sudo kubectl apply -f k8s/minio/
-sudo kubectl apply -f k8s/rabbitmq/
+
+# 2. 建立 PersistentVolume（需要在 namespace 建立前）
+sudo kubectl apply -f k8s/minio/pv.yaml
+sudo kubectl apply -f k8s/rabbitmq/pv.yaml
+
+# 3. 部署基礎服務
+sudo kubectl apply -f k8s/minio/pvc.yaml
+sudo kubectl apply -f k8s/minio/deployment.yaml
+sudo kubectl apply -f k8s/rabbitmq/pvc.yaml
+sudo kubectl apply -f k8s/rabbitmq/deployment.yaml
+
+# 4. 部署應用服務
 sudo kubectl apply -f k8s/yara-rules/
 sudo kubectl apply -f k8s/api/
 sudo kubectl apply -f k8s/worker/
 ```
 
-#### 5.5 驗證部署
+#### 5.6 驗證部署
 ```bash
 sudo kubectl get pods -n malscan
 sudo kubectl get svc -n malscan
