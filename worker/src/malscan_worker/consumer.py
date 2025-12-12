@@ -13,9 +13,9 @@ from malscan_worker.pipeline import run_pipeline
 log = structlog.get_logger()
 settings = get_settings()
 
-# Connection retry settings
-MAX_RETRIES = 30
-RETRY_DELAY = 5  # seconds
+# Connection retry settings - allow 15 minutes for RabbitMQ to be ready
+MAX_RETRIES = 90
+RETRY_DELAY = 10  # seconds
 
 
 async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:

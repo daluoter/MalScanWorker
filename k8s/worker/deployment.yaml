@@ -23,6 +23,7 @@ spec:
       containers:
         - name: worker
           image: ghcr.io/OWNER/malscan-worker:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9090
           envFrom:
@@ -43,18 +44,30 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
+          # startupProbe: Wait for container to be ready before liveness/readiness kicks in
+          # Allows up to 5 minutes (30 * 10s) for startup
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /health
               port: 9090
-            initialDelaySeconds: 30
             periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /ready
               port: 9090
-            initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: false

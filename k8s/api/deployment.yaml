@@ -24,10 +24,7 @@ spec:
         - name: api
           image: ghcr.io/OWNER/malscan-api:latest
           # NOTE: Replace OWNER with your GitHub username
-          # For local development with k3s, you can use:
-          #   imagePullPolicy: Never (after importing local image)
-          # For production, use:
-          #   imagePullPolicy: IfNotPresent (default)
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           envFrom:
@@ -45,18 +42,30 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          # startupProbe: Wait for container to be ready before liveness/readiness kicks in
+          # Allows up to 3 minutes (18 * 10s) for startup
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /ready
               port: 8000
-            initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
