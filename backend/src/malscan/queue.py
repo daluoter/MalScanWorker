@@ -36,7 +36,7 @@ async def publish_job(job_data: dict[str, Any]) -> None:
                 channel = await connection.channel()
 
                 # Declare queue (idempotent)
-                queue = await channel.declare_queue(
+                await channel.declare_queue(
                     settings.rabbitmq_queue,
                     durable=True,
                 )

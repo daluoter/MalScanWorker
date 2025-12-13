@@ -4,7 +4,6 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from io import BytesIO
-from typing import Any
 
 import structlog
 from minio import Minio
@@ -81,7 +80,9 @@ def _upload_file_sync(content: bytes, key: str, content_type: str) -> str:
     return key
 
 
-async def upload_file(content: bytes, key: str, content_type: str = "application/octet-stream") -> str:
+async def upload_file(
+    content: bytes, key: str, content_type: str = "application/octet-stream"
+) -> str:
     """Upload file to MinIO asynchronously.
 
     Args:
