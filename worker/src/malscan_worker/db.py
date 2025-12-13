@@ -5,7 +5,6 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from malscan_worker.config import get_settings

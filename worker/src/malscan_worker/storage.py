@@ -7,7 +7,6 @@ from pathlib import Path
 
 import structlog
 from minio import Minio
-from minio.error import S3Error
 
 from malscan_worker.config import get_settings
 
@@ -39,7 +38,7 @@ def _download_file_sync(key: str, dest_dir: Path) -> Path:
         Path to the downloaded file.
 
     Raises:
-        S3Error: If download fails.
+        Exception: If download fails.
     """
     client = _get_minio_client()
     bucket = settings.minio_bucket_uploads
@@ -76,7 +75,7 @@ async def download_file(key: str, dest_dir: Path) -> Path:
         Path to the downloaded file.
 
     Raises:
-        S3Error: If download fails.
+        Exception: If download fails.
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
