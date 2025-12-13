@@ -109,8 +109,16 @@ class ApiClient {
         })
 
         if (!response.ok) {
-            const error: ApiError = await response.json()
-            throw new Error(error.error.message)
+            const errorData = await response.json()
+            // FastAPI wraps HTTPException detail in {"detail": ...}
+            // Handle both {"detail": {"error": {"message": "..."}}} and {"error": {"message": "..."}}
+            const errorMessage =
+                errorData?.detail?.error?.message ||
+                errorData?.detail?.message ||
+                errorData?.error?.message ||
+                errorData?.detail ||
+                '上傳失敗'
+            throw new Error(String(errorMessage))
         }
 
         return response.json()

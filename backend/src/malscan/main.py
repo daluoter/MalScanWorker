@@ -35,16 +35,19 @@ if settings.cors_origins == "*":
 else:
     cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
 
+# Prometheus metrics (add BEFORE CORS so CORS middleware runs first)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+# CORS middleware (added last = runs first in middleware chain)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=settings.cors_origins != "*",  # credentials not allowed with *
-    allow_methods=["*"],
+    allow_credentials=False,  # Must be False when allow_origins is ["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,  # Cache preflight for 10 minutes
 )
-
-# Prometheus metrics
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 # Routes
 app.include_router(router, prefix="/api/v1")
