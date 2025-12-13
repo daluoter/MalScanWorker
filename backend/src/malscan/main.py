@@ -71,6 +71,15 @@ async def startup_event() -> None:
     """Application startup."""
     log.info("application_startup", cors_origins=cors_origins)
 
+    # Auto-create database tables if they don't exist
+    from malscan.db.engine import get_engine
+    from malscan.models import Base
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    log.info("database_tables_ready")
+
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:

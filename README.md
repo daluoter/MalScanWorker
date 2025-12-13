@@ -216,6 +216,27 @@ https://random-words-here.trycloudflare.com
 
 ## 本機開發
 
+### 本地資料庫設定
+
+後端需要 PostgreSQL 資料庫。本地開發可使用 Docker 快速啟動：
+
+```bash
+# 1. 啟動本地 PostgreSQL
+docker run -d \
+  --name malscan-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=malscan \
+  -p 5432:5432 \
+  postgres:15
+
+# 2. 建立 .env 檔案（在 backend 目錄）
+cd backend
+echo 'DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/malscan' > .env
+```
+
+> 💡 資料庫表格會在後端啟動時自動建立，無需手動執行 migration。
+
 ### 前端
 ```bash
 cd frontend

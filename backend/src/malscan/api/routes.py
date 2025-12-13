@@ -6,9 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from malscan.config import get_settings
+from malscan.db import get_db
+from malscan.models import File, Job, JobStatus
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
 
 router = APIRouter()
@@ -40,7 +44,9 @@ log = structlog.get_logger()
         }
     },
 )
-async def upload_file(request: Request) -> UploadResponse:
+async def upload_file(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -93,30 +99,54 @@ async def upload_file(request: Request) -> UploadResponse:
         # Calculate hash
         sha256_hash = hashlib.sha256(content).hexdigest()
 
-        # Generate IDs
-        file_id = str(uuid.uuid4())
-        job_id = str(uuid.uuid4())
+        # TODO: Store file in MinIO
+
+        # Check for existing file by SHA256 (deduplication)
+        stmt = select(File).where(File.sha256 == sha256_hash)
+        result = await db.execute(stmt)
+        existing_file = result.scalar_one_or_none()
+
+        if existing_file:
+            file_record = existing_file
+            log.info("file_exists", file_id=str(file_record.id), sha256=sha256_hash)
+        else:
+            # Create new file record
+            file_record = File(
+                sha256=sha256_hash,
+                size=file_size,
+                filename=filename,
+                content_type=content_type,
+            )
+            db.add(file_record)
+            await db.flush()  # Get the file ID
+            log.info("file_created", file_id=str(file_record.id), sha256=sha256_hash)
+
+        # Create job record
+        job_record = Job(
+            file_id=file_record.id,
+            status=JobStatus.QUEUED.value,
+            stages_total=settings.stages_total,
+        )
+        db.add(job_record)
+        await db.commit()
 
         log.info(
-            "file_uploaded",
-            job_id=job_id,
-            file_id=file_id,
+            "job_created",
+            job_id=str(job_record.id),
+            file_id=str(file_record.id),
             sha256=sha256_hash,
             size=file_size,
             filename=filename,
         )
 
-        # TODO: Store file in MinIO
-        # TODO: Create file record in database (upsert by sha256)
-        # TODO: Create job record in database
         # TODO: Publish job to RabbitMQ
 
         return UploadResponse(
-            job_id=job_id,
-            file_id=file_id,
+            job_id=str(job_record.id),
+            file_id=str(file_record.id),
             sha256=sha256_hash,
-            status="queued",
-            created_at=datetime.now(timezone.utc),
+            status=job_record.status,
+            created_at=job_record.created_at,
         )
 
     except HTTPException:
@@ -135,27 +165,44 @@ async def upload_file(request: Request) -> UploadResponse:
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str) -> JobStatusResponse:
+async def get_job_status(
+    job_id: str, db: AsyncSession = Depends(get_db)
+) -> JobStatusResponse:
     """
     Get the status of a job.
 
     Returns current stage, progress, and any error message.
     """
-    # TODO: Query job from database
     log.info("job_status_requested", job_id=job_id)
 
-    # Mock response for skeleton
+    # Parse job_id to UUID
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id format")
+
+    # Query job from database
+    stmt = select(Job).where(Job.id == job_uuid)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Calculate progress percent
+    percent = int((job.stages_done / job.stages_total) * 100) if job.stages_total > 0 else 0
+
     return JobStatusResponse(
-        job_id=job_id,
-        status="scanning",
+        job_id=str(job.id),
+        status=job.status,
         progress={
-            "current_stage": "clamav",
-            "stages_done": 1,
-            "stages_total": 5,
-            "percent": 20,
+            "current_stage": job.current_stage,
+            "stages_done": job.stages_done,
+            "stages_total": job.stages_total,
+            "percent": percent,
         },
-        updated_at=datetime.now(timezone.utc),
-        error_message=None,
+        updated_at=job.updated_at,
+        error_message=job.error_message,
     )
 
 
@@ -217,3 +264,4 @@ async def get_report(job_id: str) -> dict[str, Any]:
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
