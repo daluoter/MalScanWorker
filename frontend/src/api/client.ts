@@ -92,11 +92,24 @@ export interface ApiError {
     }
 }
 
+export interface HealthResponse {
+    status: string
+}
+
 class ApiClient {
     private baseUrl: string
 
     constructor(baseUrl: string = API_BASE_URL) {
         this.baseUrl = baseUrl
+    }
+
+    async checkHealth(): Promise<boolean> {
+        try {
+            const response = await fetch(`${this.baseUrl}/health`)
+            return response.ok
+        } catch {
+            return false
+        }
     }
 
     async uploadFile(file: File): Promise<UploadResponse> {
