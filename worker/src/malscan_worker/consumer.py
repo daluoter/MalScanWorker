@@ -7,6 +7,7 @@ import aio_pika
 import structlog
 
 from malscan_worker.config import get_settings
+from malscan_worker.db import update_job_status
 from malscan_worker.metrics import job_total, worker_active_jobs
 from malscan_worker.pipeline import run_pipeline
 
@@ -21,6 +22,9 @@ RETRY_DELAY = 10  # seconds
 async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:
     """Process a single job message."""
     async with message.process():
+        job_id = None
+        file_id = None
+
         try:
             # Parse message
             body = json.loads(message.body.decode())
@@ -34,12 +38,16 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
             )
 
             worker_active_jobs.inc()
-            job_total.labels(status="scanning").inc()
+            job_total.labels(status="processing").inc()
+
+            # Update job status to processing
+            if job_id:
+                await update_job_status(job_id, "processing")
 
             try:
                 # Run the analysis pipeline
                 await run_pipeline(body)
-                job_total.labels(status="done").inc()
+                job_total.labels(status="completed").inc()
             except Exception as e:
                 log.error(
                     "job_failed",
@@ -48,7 +56,8 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
                     error=str(e),
                 )
                 job_total.labels(status="failed").inc()
-                raise
+                # Note: DB status update is already handled in pipeline.py
+                # Don't re-raise to avoid re-queuing failed messages
             finally:
                 worker_active_jobs.dec()
 
