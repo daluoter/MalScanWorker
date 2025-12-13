@@ -156,6 +156,62 @@ sudo kubectl get svc -n malscan
 | MinIO Console | http://VM_IP:NodePort (查 `kubectl get svc`) |
 | RabbitMQ Management | http://VM_IP:NodePort |
 
+### 7. 使用 Cloudflare Tunnel 連通前後端
+
+> ⚠️ **為什麼需要這個？**
+>
+> GitHub Pages 使用 HTTPS，而瀏覽器的安全策略（Mixed Content）會阻止從 HTTPS 頁面向 HTTP API 發送請求。
+> 使用 Cloudflare Tunnel 可以免費為你的 VM API 提供 HTTPS 端點。
+
+#### 7.1 安裝 cloudflared（在 VM 內）
+
+```bash
+# Debian/Ubuntu
+curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+sudo dpkg -i cloudflared.deb
+
+# 或使用 snap
+sudo snap install cloudflared
+```
+
+#### 7.2 啟動 Quick Tunnel
+
+```bash
+# 將 30080 替換為你的 API NodePort
+sudo cloudflared tunnel --url http://localhost:30080
+```
+
+成功後會顯示類似以下的公開 URL：
+```
+Your quick Tunnel has been created! Visit it at:
+https://random-words-here.trycloudflare.com
+```
+
+> 💡 **注意：** Quick Tunnel 每次重啟 URL 都會改變。如果需要固定 URL，請參考 [Named Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/)。
+
+#### 7.3 更新 GitHub Repository Variables
+
+1. 前往 repo **Settings** → **Secrets and variables** → **Actions** → **Variables**
+2. 編輯 `API_BASE_URL` 變數，將值改為 Cloudflare Tunnel 提供的 HTTPS URL：
+   ```
+   https://random-words-here.trycloudflare.com
+   ```
+   > ⚠️ **注意：** URL 末尾**不要**加斜杠 `/`
+
+#### 7.4 重新部署前端
+
+觸發 GitHub Pages 重新部署（以下任一方式）：
+- 推送任何 commit 到 `main` 分支
+- 前往 **Actions** → **Frontend Deploy** → **Run workflow**
+
+#### 7.5 驗證連通
+
+1. 打開 https://YOUR_USERNAME.github.io/MalScanWorker/
+2. 上傳一個測試檔案
+3. 應該看到上傳成功並進入分析進度頁面
+
+> 🔍 **除錯提示：** 如果遇到問題，打開瀏覽器 DevTools (F12) → Network 標籤，檢查 API 請求的 URL 和響應。
+
 ---
 
 ## 本機開發
