@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from malscan.config import get_settings
 from malscan.db import get_db
 from malscan.models import File, Job, JobStatus
+from malscan.queue import publish_job
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
+from malscan.storage import upload_file as upload_to_minio
 
 router = APIRouter()
 settings = get_settings()
@@ -99,7 +101,20 @@ async def upload_file(
         # Calculate hash
         sha256_hash = hashlib.sha256(content).hexdigest()
 
-        # TODO: Store file in MinIO
+        # Store file in MinIO (use SHA256 as storage key)
+        try:
+            await upload_to_minio(content, sha256_hash, content_type)
+        except Exception as e:
+            log.error("minio_upload_failed", sha256=sha256_hash, error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": {
+                        "code": "STORAGE_ERROR",
+                        "message": f"Failed to store file: {e}",
+                    }
+                },
+            ) from e
 
         # Check for existing file by SHA256 (deduplication)
         stmt = select(File).where(File.sha256 == sha256_hash)
@@ -139,7 +154,20 @@ async def upload_file(
             filename=filename,
         )
 
-        # TODO: Publish job to RabbitMQ
+        # Publish job to RabbitMQ
+        job_message = {
+            "job_id": str(job_record.id),
+            "file_id": str(file_record.id),
+            "storage_key": sha256_hash,
+            "sha256": sha256_hash,
+            "original_filename": filename,
+        }
+        try:
+            await publish_job(job_message)
+        except Exception as e:
+            log.error("rabbitmq_publish_failed", job_id=str(job_record.id), error=str(e))
+            # Note: Job is already in DB, so we don't rollback. Worker can be triggered manually.
+            # In production, consider a retry mechanism or dead-letter queue.
 
         return UploadResponse(
             job_id=str(job_record.id),
@@ -179,7 +207,7 @@ async def get_job_status(
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid job_id format")
+        raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
     # Query job from database
     stmt = select(Job).where(Job.id == job_uuid)
