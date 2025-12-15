@@ -38,16 +38,16 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
             )
 
             worker_active_jobs.inc()
-            job_total.labels(status="processing").inc()
+            job_total.labels(status="scanning").inc()
 
-            # Update job status to processing
+            # Update job status to scanning
             if job_id:
-                await update_job_status(job_id, "processing")
+                await update_job_status(job_id, "scanning")
 
             try:
                 # Run the analysis pipeline
                 await run_pipeline(body)
-                job_total.labels(status="completed").inc()
+                job_total.labels(status="done").inc()
             except Exception as e:
                 log.error(
                     "job_failed",

@@ -31,7 +31,7 @@ async def update_job_status(
 
     Args:
         job_id: Job UUID as string.
-        status: New status (queued, processing, completed, failed).
+        status: New status (queued, scanning, done, failed).
         error_message: Optional error message for failed status.
         **kwargs: Additional fields to update.
     """

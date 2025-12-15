@@ -194,10 +194,10 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             total_ms=total_ms,
         )
 
-        # Update job status to completed
+        # Update job status to done
         await update_job_status(
             job_id,
-            "completed",
+            "done",
             current_stage=None,
             stages_done=len(STAGES),
         )
