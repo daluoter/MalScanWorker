@@ -70,6 +70,10 @@ class IocExtractStage(Stage):
             }
             domains = [d for d in domains if d not in common_domains]
 
+            # Filter out short/invalid domains (likely false positives from binary data)
+            # Valid domains should have at least 4 chars (e.g., "a.io")
+            domains = [d for d in domains if len(d) >= 4 and "." in d[1:-1]]
+
             # Extract IPs
             ips = list({
                 match.decode("utf-8", errors="ignore")

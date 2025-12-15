@@ -24,6 +24,7 @@ class FileTypeStage(Stage):
             # Detect MIME type
             mime_type = magic.from_file(str(ctx.file_path), mime=True)
             magic_desc = magic.from_file(str(ctx.file_path))
+            file_size = ctx.file_path.stat().st_size
 
             ended_at = datetime.now(timezone.utc)
             duration_ms = int((ended_at - started_at).total_seconds() * 1000)
@@ -35,8 +36,9 @@ class FileTypeStage(Stage):
                 ended_at=ended_at,
                 duration_ms=duration_ms,
                 findings={
-                    "mime": mime_type,
+                    "mime_type": mime_type,
                     "magic_desc": magic_desc,
+                    "file_size": file_size,
                 },
                 artifacts=[],
                 error=None,
