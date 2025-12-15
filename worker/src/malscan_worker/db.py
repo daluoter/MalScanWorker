@@ -127,3 +127,45 @@ async def update_job_stage(job_id: str, stage: str, stages_done: int) -> None:
             log.error("job_stage_update_failed", job_id=job_id, error=str(e))
             # Don't raise - stage update failure should not block analysis
             await session.rollback()
+
+
+async def update_job_result(job_id: str, result: dict[str, Any]) -> None:
+    """Store analysis result in job record.
+
+    Args:
+        job_id: Job UUID as string.
+        result: Analysis result as JSON-serializable dict.
+    """
+    async with AsyncSession(_engine) as session:
+        try:
+            import json
+
+            from sqlalchemy import text
+
+            stmt = text(
+                """
+                UPDATE jobs
+                SET result = :result, updated_at = :updated_at
+                WHERE id = :job_id
+                """
+            )
+
+            await session.execute(
+                stmt,
+                {
+                    "job_id": UUID(job_id),
+                    "result": json.dumps(result),
+                    "updated_at": datetime.now(timezone.utc),
+                },
+            )
+            await session.commit()
+
+            log.info(
+                "job_result_stored",
+                job_id=job_id,
+            )
+
+        except Exception as e:
+            log.error("job_result_store_failed", job_id=job_id, error=str(e))
+            # Don't raise - result store failure should not block status update
+            await session.rollback()

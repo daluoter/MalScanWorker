@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 
 from malscan_worker.config import get_settings
-from malscan_worker.db import update_job_stage, update_job_status
+from malscan_worker.db import update_job_result, update_job_stage, update_job_status
 from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
@@ -42,6 +42,100 @@ def _cleanup_temp_dir(job_id: str) -> None:
             log.info("temp_dir_cleaned", job_id=job_id, path=str(temp_dir))
         except Exception as e:
             log.warning("temp_dir_cleanup_failed", job_id=job_id, error=str(e))
+
+
+def _build_analysis_result(
+    job_id: str,
+    file_id: str,
+    ctx: StageContext,
+    results: list[StageResult],
+    total_ms: int,
+) -> dict[str, Any]:
+    """Build complete analysis result for storage.
+
+    Args:
+        job_id: Job UUID.
+        file_id: File UUID.
+        ctx: Stage context with file info.
+        results: List of stage results.
+        total_ms: Total pipeline duration in milliseconds.
+
+    Returns:
+        Complete analysis result as JSON-serializable dict.
+    """
+    # Extract key findings from stage results
+    stage_findings = {r.stage_name: r.findings for r in results}
+
+    # Determine verdict based on findings
+    verdict = "clean"
+    score = 0
+
+    # Check ClamAV result
+    clamav = stage_findings.get("clamav", {})
+    if clamav.get("infected"):
+        verdict = "malicious"
+        score = max(score, 90)
+
+    # Check YARA result
+    yara = stage_findings.get("yara", {})
+    yara_matches = yara.get("matches", [])
+    if yara_matches:
+        verdict = "suspicious" if verdict == "clean" else verdict
+        score = max(score, 50 + len(yara_matches) * 10)
+
+    # Build file info
+    filetype = stage_findings.get("file-type", {})
+    file_info = {
+        "file_id": file_id,
+        "sha256": ctx.sha256,
+        "mime": filetype.get("mime_type", "application/octet-stream"),
+        "size": filetype.get("file_size", 0),
+        "original_filename": ctx.original_filename,
+    }
+
+    # Build IOC info
+    ioc_findings = stage_findings.get("ioc-extract", {})
+    iocs = {
+        "urls": ioc_findings.get("urls", []),
+        "domains": ioc_findings.get("domains", []),
+        "ips": ioc_findings.get("ip_addresses", []),
+        "hashes": {
+            "md5": ioc_findings.get("md5", ""),
+            "sha1": ioc_findings.get("sha1", ""),
+            "sha256": ctx.sha256,
+        },
+    }
+
+    # Build timing info
+    timings = {
+        "total_ms": total_ms,
+        "stages": [
+            {
+                "name": r.stage_name,
+                "status": r.status,
+                "duration_ms": r.duration_ms,
+            }
+            for r in results
+        ],
+    }
+
+    return {
+        "job_id": job_id,
+        "file": file_info,
+        "verdict": verdict,
+        "score": min(score, 100),
+        "results": {
+            "av_result": {
+                "engine": "ClamAV",
+                "infected": clamav.get("infected", False),
+                "threat_name": clamav.get("threat_name"),
+            },
+            "yara_hits": yara_matches,
+            "iocs": iocs,
+            "sandbox": stage_findings.get("sandbox", {}),
+        },
+        "timings": timings,
+    }
 
 
 async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
@@ -193,6 +287,18 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             file_id=file_id,
             total_ms=total_ms,
         )
+
+        # Build complete result for storage
+        analysis_result = _build_analysis_result(
+            job_id=job_id,
+            file_id=file_id,
+            ctx=ctx,
+            results=results,
+            total_ms=total_ms,
+        )
+
+        # Store result in database
+        await update_job_result(job_id, analysis_result)
 
         # Update job status to done
         await update_job_status(

@@ -2,7 +2,6 @@
 
 import hashlib
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -235,61 +234,42 @@ async def get_job_status(
 
 
 @router.get("/reports/{job_id}", response_model=ReportResponse)
-async def get_report(job_id: str) -> dict[str, Any]:
+async def get_report(
+    job_id: str, db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
     """
     Get the analysis report for a completed job.
 
     Returns full report including AV results, YARA hits, IOCs, and timings.
     """
-    # TODO: Query report from database
     log.info("report_requested", job_id=job_id)
 
-    # Mock response for skeleton
-    return {
-        "job_id": job_id,
-        "file": {
-            "file_id": "mock-file-id",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991",
-            "mime": "application/octet-stream",
-            "size": 1024,
-            "original_filename": "test.bin",
-        },
-        "verdict": "clean",
-        "score": 0,
-        "results": {
-            "av_result": {
-                "engine": "ClamAV",
-                "infected": False,
-                "threat_name": None,
-            },
-            "yara_hits": [],
-            "iocs": {
-                "urls": [],
-                "domains": [],
-                "ips": [],
-                "hashes": {
-                    "md5": "d41d8cd98f00b204e9800998ecf8427e",
-                    "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
-                    "sha256": "e3b0c44298fc1c149afbf4c8996fb924",
-                },
-            },
-            "sandbox": {
-                "executed": True,
-                "behaviors": [],
-                "network_connections": [],
-                "is_mock": True,
-            },
-        },
-        "timings": {
-            "total_ms": 5000,
-            "stages": [
-                {"name": "file-type", "status": "ok", "duration_ms": 50},
-                {"name": "clamav", "status": "ok", "duration_ms": 2000},
-                {"name": "yara", "status": "ok", "duration_ms": 1000},
-                {"name": "ioc-extract", "status": "ok", "duration_ms": 450},
-                {"name": "sandbox", "status": "ok", "duration_ms": 1500},
-            ],
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
+    # Parse job_id to UUID
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
+    # Query job from database
+    stmt = select(Job).where(Job.id == job_uuid)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Check if job is completed
+    if job.status != JobStatus.DONE.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not completed. Current status: {job.status}",
+        )
+
+    # Check if result exists
+    if job.result is None:
+        raise HTTPException(status_code=404, detail="Report not available yet")
+
+    # Return stored result with created_at
+    report = dict(job.result)
+    report["created_at"] = job.created_at.isoformat()
+    return report
