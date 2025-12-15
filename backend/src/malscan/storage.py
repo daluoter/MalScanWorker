@@ -7,7 +7,9 @@ from io import BytesIO
 
 import structlog
 from minio import Minio
+from minio.commonconfig import Filter
 from minio.error import S3Error
+from minio.lifecycleconfig import Expiration, LifecycleConfig, Rule
 
 from malscan.config import get_settings
 
@@ -29,11 +31,27 @@ def _get_minio_client() -> Minio:
 
 
 def _ensure_bucket_exists(client: Minio, bucket: str) -> None:
-    """Ensure the bucket exists, create if not."""
+    """Ensure the bucket exists and has lifecycle rules."""
     try:
+        # Create bucket if not exists
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
             log.info("bucket_created", bucket=bucket)
+
+        # Set lifecycle rule (7 days expiry)
+        lifecycle_config = LifecycleConfig(
+            [
+                Rule(
+                    status="Enabled",
+                    rule_id="7-days-expiry",
+                    expiration=Expiration(days=7),
+                    rule_filter=Filter(prefix=""),
+                )
+            ]
+        )
+        client.set_bucket_lifecycle(bucket, lifecycle_config)
+        log.info("bucket_lifecycle_configured", bucket=bucket, days=7)
+
     except S3Error as e:
         log.error("bucket_check_failed", bucket=bucket, error=str(e))
         raise
