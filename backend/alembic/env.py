@@ -4,15 +4,15 @@ import asyncio
 import os
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
 # Import models to ensure they are registered with Base
 from malscan.models.base import Base
 from malscan.models.file import File  # noqa: F401
 from malscan.models.job import Job  # noqa: F401
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from alembic import context
 
 # this is the Alembic Config object
 config = context.config
