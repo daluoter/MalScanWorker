@@ -1,7 +1,7 @@
 """Pytest configuration and fixtures for backend tests."""
 
 from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -34,7 +34,9 @@ def mock_db_session() -> Generator[AsyncMock, None, None]:
 @pytest.fixture
 def mock_minio(mocker) -> Generator[MagicMock, None, None]:
     """Mock MinIO storage operations."""
-    mock_upload = mocker.patch("malscan.api.routes.upload_to_minio", new_callable=AsyncMock)
+    mock_upload = mocker.patch(
+        "malscan.api.routes.upload_to_minio", new_callable=AsyncMock
+    )
     mock_upload.return_value = None
     yield mock_upload
 
@@ -42,7 +44,9 @@ def mock_minio(mocker) -> Generator[MagicMock, None, None]:
 @pytest.fixture
 def mock_rabbitmq(mocker) -> Generator[MagicMock, None, None]:
     """Mock RabbitMQ publish operations."""
-    mock_publish = mocker.patch("malscan.api.routes.publish_job", new_callable=AsyncMock)
+    mock_publish = mocker.patch(
+        "malscan.api.routes.publish_job", new_callable=AsyncMock
+    )
     mock_publish.return_value = None
     yield mock_publish
 

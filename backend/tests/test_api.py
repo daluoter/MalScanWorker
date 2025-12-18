@@ -1,15 +1,16 @@
 """Integration tests for API endpoints."""
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from fastapi.testclient import TestClient
 
 from malscan.models import JobStatus
 
 
-def test_upload_file_success(client: TestClient, mock_db_session: AsyncMock, mock_minio, mock_rabbitmq):
+def test_upload_file_success(
+    client: TestClient, mock_db_session: AsyncMock, mock_minio, mock_rabbitmq
+):
     """Test successful file upload."""
     # Configure mock execute to return None for existing file check
     mock_result = MagicMock()
@@ -19,6 +20,7 @@ def test_upload_file_success(client: TestClient, mock_db_session: AsyncMock, moc
     # Mock flush to set IDs on models
     async def mock_flush():
         pass
+
     mock_db_session.flush = AsyncMock(side_effect=mock_flush)
     mock_db_session.commit = AsyncMock()
     mock_db_session.add = MagicMock()
