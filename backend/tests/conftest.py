@@ -7,10 +7,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from malscan.api.routes import router
 from malscan.db import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 # Create a test app without startup events to avoid DB connection
@@ -34,9 +33,7 @@ def mock_db_session() -> Generator[AsyncMock, None, None]:
 @pytest.fixture
 def mock_minio(mocker) -> Generator[MagicMock, None, None]:
     """Mock MinIO storage operations."""
-    mock_upload = mocker.patch(
-        "malscan.api.routes.upload_to_minio", new_callable=AsyncMock
-    )
+    mock_upload = mocker.patch("malscan.api.routes.upload_to_minio", new_callable=AsyncMock)
     mock_upload.return_value = None
     yield mock_upload
 
@@ -44,9 +41,7 @@ def mock_minio(mocker) -> Generator[MagicMock, None, None]:
 @pytest.fixture
 def mock_rabbitmq(mocker) -> Generator[MagicMock, None, None]:
     """Mock RabbitMQ publish operations."""
-    mock_publish = mocker.patch(
-        "malscan.api.routes.publish_job", new_callable=AsyncMock
-    )
+    mock_publish = mocker.patch("malscan.api.routes.publish_job", new_callable=AsyncMock)
     mock_publish.return_value = None
     yield mock_publish
 

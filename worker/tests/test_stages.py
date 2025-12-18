@@ -1,11 +1,11 @@
 """Unit tests for pipeline stages."""
 
-import pytest
 from pathlib import Path
 
+import pytest
+from malscan_worker.stages.base import StageContext
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
-from malscan_worker.stages.base import StageContext
 
 
 @pytest.mark.asyncio
@@ -27,7 +27,7 @@ async def test_filetype_stage_file_not_found(stage_context: StageContext):
     """Test file type detection failure due to missing file."""
     # Point to non-existent file
     stage_context.file_path = Path("/non/existent/file")
-    
+
     stage = FileTypeStage()
     result = await stage.execute(stage_context)
 

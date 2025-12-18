@@ -30,7 +30,9 @@ def temp_test_file(tmp_path):
     """Create a temporary test file with content."""
     file_path = tmp_path / "test_file.txt"
     # URL must be properly formatted for the regex to match
-    file_path.write_bytes(b"test file content including https://malicious.com/path and IP 1.2.3.4 here")
+    file_path.write_bytes(
+        b"test file content including https://malicious.com/path and IP 1.2.3.4 here"
+    )
     return file_path
 
 

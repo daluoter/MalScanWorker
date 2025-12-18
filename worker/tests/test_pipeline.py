@@ -1,12 +1,10 @@
 """Unit tests for the analysis pipeline."""
 
 from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-
-from malscan_worker.stages.base import StageResult, Stage, StageContext
+from malscan_worker.stages.base import Stage, StageResult
 
 
 class MockStage(Stage):
@@ -55,7 +53,11 @@ async def test_run_pipeline_success(mocker, tmp_path):
     test_file.write_bytes(b"test content")
 
     # Mock all external dependencies
-    mocker.patch("malscan_worker.pipeline.download_file", new_callable=AsyncMock, return_value=test_file)
+    mocker.patch(
+        "malscan_worker.pipeline.download_file",
+        new_callable=AsyncMock,
+        return_value=test_file,
+    )
     mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
@@ -89,7 +91,11 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
     test_file.write_bytes(b"test content")
 
     # Mock dependencies
-    mocker.patch("malscan_worker.pipeline.download_file", new_callable=AsyncMock, return_value=test_file)
+    mocker.patch(
+        "malscan_worker.pipeline.download_file",
+        new_callable=AsyncMock,
+        return_value=test_file,
+    )
     mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
