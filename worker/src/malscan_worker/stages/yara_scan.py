@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from malscan_worker.config import get_settings
 from malscan_worker.stages.base import Stage, StageContext, StageResult
@@ -86,8 +87,8 @@ class YaraStage(Stage):
                                 current_rule = {
                                     "rule": parts[0],
                                     "namespace": rule_file.stem,
-                                    "tags": [],  # type: ignore[var-annotated]
-                                    "strings": [],  # type: ignore[var-annotated]
+                                    "tags": list[str](),
+                                    "strings": list[str](),
                                 }
                                 matches.append(current_rule)
                         else:
@@ -97,8 +98,9 @@ class YaraStage(Stage):
                                 parts = line.split(":", 2)
                                 if len(parts) >= 2:
                                     string_name = parts[1].strip()
-                                    if string_name not in current_rule["strings"]:
-                                        current_rule["strings"].append(string_name)
+                                    strings_list = cast(list[str], current_rule["strings"])
+                                    if string_name not in strings_list:
+                                        strings_list.append(string_name)
 
             ended_at = datetime.now(timezone.utc)
             duration_ms = int((ended_at - started_at).total_seconds() * 1000)

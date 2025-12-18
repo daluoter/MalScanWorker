@@ -1,12 +1,20 @@
 """MinIO storage client for file download operations."""
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
 import structlog
 from minio import Minio
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from malscan_worker.config import get_settings
 
@@ -15,6 +23,9 @@ settings = get_settings()
 
 # Thread pool for running sync MinIO operations
 _executor = ThreadPoolExecutor(max_workers=4)
+
+# Get standard logging logger for tenacity before_sleep_log
+_logger = logging.getLogger(__name__)
 
 
 def _get_minio_client() -> Minio:
@@ -27,8 +38,20 @@ def _get_minio_client() -> Minio:
     )
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    before_sleep=before_sleep_log(_logger, logging.WARNING),
+    retry=retry_if_exception_type(Exception),
+    reraise=True,
+)
 def _download_file_sync(key: str, dest_dir: Path) -> Path:
-    """Synchronous file download from MinIO.
+    """Synchronous file download from MinIO with retry.
+
+    Uses exponential backoff retry strategy:
+    - Maximum 3 attempts
+    - Wait times: 1s -> 2s -> 4s
+    - Total maximum wait: ~7 seconds
 
     Args:
         key: Storage key (SHA256 hash).
@@ -38,7 +61,7 @@ def _download_file_sync(key: str, dest_dir: Path) -> Path:
         Path to the downloaded file.
 
     Raises:
-        Exception: If download fails.
+        Exception: If download fails after all retries.
     """
     client = _get_minio_client()
     bucket = settings.minio_bucket_uploads
@@ -75,7 +98,7 @@ async def download_file(key: str, dest_dir: Path) -> Path:
         Path to the downloaded file.
 
     Raises:
-        Exception: If download fails.
+        Exception: If download fails after retries.
     """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
