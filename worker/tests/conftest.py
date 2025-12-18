@@ -5,9 +5,8 @@ from typing import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from malscan_worker.stages.base import StageContext
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @pytest.fixture
