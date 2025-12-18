@@ -63,7 +63,7 @@ MalScanWorker 系統需要完成檔案儲存和任務隊列的整合，以實現
 
 **選擇**: Worker 下載檔案到 `/tmp/{job_id}/` 目錄，分析完成後清理
 
-**理由**: 
+**理由**:
 - 隔離不同 job 的檔案
 - 容器重啟時 `/tmp` 自動清理
 - 避免磁碟空間累積
@@ -79,7 +79,7 @@ MalScanWorker 系統需要完成檔案儲存和任務隊列的整合，以實現
 
 ## Open Questions
 
-1. ~~是否需要在 File 表增加 `storage_key` 欄位？~~ 
+1. ~~是否需要在 File 表增加 `storage_key` 欄位？~~
    - 決定：使用 SHA256 作為 storage key，無需額外欄位
 
 2. Worker 完成後是否需要刪除 MinIO 中的檔案？

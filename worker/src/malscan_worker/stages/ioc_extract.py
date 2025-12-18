@@ -13,13 +13,13 @@ URL_PATTERN = re.compile(
 )
 
 DOMAIN_PATTERN = re.compile(
-    rb'(?<![a-zA-Z0-9.-])([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}(?![a-zA-Z0-9.-])',
+    rb"(?<![a-zA-Z0-9.-])([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}(?![a-zA-Z0-9.-])",
     re.IGNORECASE,
 )
 
 IP_PATTERN = re.compile(
-    rb'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}'
-    rb'(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+    rb"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+    rb"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
 )
 
 
@@ -41,10 +41,9 @@ class IocExtractStage(Stage):
             content = ctx.file_path.read_bytes()
 
             # Extract URLs
-            urls = list({
-                match.decode("utf-8", errors="ignore")
-                for match in URL_PATTERN.findall(content)
-            })[:100]  # Limit to 100
+            urls = list(
+                {match.decode("utf-8", errors="ignore") for match in URL_PATTERN.findall(content)}
+            )[:100]  # Limit to 100
 
             # Extract domains (excluding URLs)
             url_domains = set()
@@ -57,16 +56,22 @@ class IocExtractStage(Stage):
                 except Exception:
                     pass
 
-            domains = list({
-                match.decode("utf-8", errors="ignore").lower()
-                for match in DOMAIN_PATTERN.findall(content)
-                if match.decode("utf-8", errors="ignore").lower() not in url_domains
-            })[:100]
+            domains = list(
+                {
+                    match.decode("utf-8", errors="ignore").lower()
+                    for match in DOMAIN_PATTERN.findall(content)
+                    if match.decode("utf-8", errors="ignore").lower() not in url_domains
+                }
+            )[:100]
 
             # Filter out common non-malicious domains
             common_domains = {
-                "microsoft.com", "windows.com", "google.com",
-                "example.com", "localhost", "w3.org",
+                "microsoft.com",
+                "windows.com",
+                "google.com",
+                "example.com",
+                "localhost",
+                "w3.org",
             }
             domains = [d for d in domains if d not in common_domains]
 
@@ -75,10 +80,9 @@ class IocExtractStage(Stage):
             domains = [d for d in domains if len(d) >= 4 and "." in d[1:-1]]
 
             # Extract IPs
-            ips = list({
-                match.decode("utf-8", errors="ignore")
-                for match in IP_PATTERN.findall(content)
-            })[:50]
+            ips = list(
+                {match.decode("utf-8", errors="ignore") for match in IP_PATTERN.findall(content)}
+            )[:50]
 
             # Filter out private/local IPs
             def is_public_ip(ip: str) -> bool:

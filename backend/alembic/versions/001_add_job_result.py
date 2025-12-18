@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '001_add_job_result'
+revision: str = "001_add_job_result"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -20,9 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add result column to jobs table."""
-    op.add_column('jobs', sa.Column('result', JSONB, nullable=True))
+    op.add_column("jobs", sa.Column("result", JSONB, nullable=True))
 
 
 def downgrade() -> None:
     """Remove result column from jobs table."""
-    op.drop_column('jobs', 'result')
+    op.drop_column("jobs", "result")

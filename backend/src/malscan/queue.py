@@ -73,6 +73,7 @@ async def publish_job(job_data: dict[str, Any]) -> None:
             )
             if attempt < MAX_RETRIES:
                 import asyncio
+
                 await asyncio.sleep(RETRY_DELAY)
 
     log.error(

@@ -56,4 +56,3 @@ The backend MUST publish job messages to RabbitMQ for worker consumption.
 - **When** the upload processing completes
 - **Then** a JSON message must be published to `malscan.jobs` queue
 - **And** the message must contain `job_id`, `file_id`, `storage_key`, `sha256`, and `original_filename`
-

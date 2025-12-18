@@ -57,4 +57,3 @@ The worker MUST clean up temporary files after processing.
 - **Given** a job fails during processing
 - **When** error handling completes
 - **Then** the temporary directory `/tmp/{job_id}/` must be deleted
-

@@ -17,5 +17,3 @@
     - Verify application startup matches `DATABASE_URL`.
     - Verify `POST /files` inserts rows in `files` and `jobs`.
     - Verify `GET /jobs/{job_id}` returns data from DB.
-
-

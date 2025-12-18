@@ -45,9 +45,7 @@ log = structlog.get_logger()
         }
     },
 )
-async def upload_file(
-    request: Request, db: AsyncSession = Depends(get_db)
-) -> UploadResponse:
+async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -192,9 +190,7 @@ async def upload_file(
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(
-    job_id: str, db: AsyncSession = Depends(get_db)
-) -> JobStatusResponse:
+async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> JobStatusResponse:
     """
     Get the status of a job.
 
@@ -234,9 +230,7 @@ async def get_job_status(
 
 
 @router.get("/reports/{job_id}", response_model=ReportResponse)
-async def get_report(
-    job_id: str, db: AsyncSession = Depends(get_db)
-) -> dict[str, Any]:
+async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """
     Get the analysis report for a completed job.
 
