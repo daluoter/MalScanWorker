@@ -65,8 +65,12 @@ export default function UploadPage() {
 
         try {
             const result = await apiClient.uploadFile(file)
-            // 上傳成功，跳轉到狀態頁
-            navigate(`/jobs/${result.job_id}`)
+            navigate(`/jobs/${result.job_id}`, {
+                state: {
+                    fileName: file.name,
+                    fileSize: file.size
+                }
+            })
         } catch (err) {
             setError(err instanceof Error ? err.message : '上傳失敗')
         } finally {
@@ -76,43 +80,43 @@ export default function UploadPage() {
 
     return (
         <div className="container">
-            <h1>🔍 MalScan</h1>
-            <p style={{ marginBottom: '2rem', color: 'var(--color-text-secondary)' }}>
-                上傳檔案進行惡意軟體分析
-            </p>
+            {/* Header */}
+            <div className="mb-8">
+                <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-neon-cyan to-neon-purple bg-clip-text text-transparent">
+                    🔍 MalScan
+                </h1>
+                <p className="text-slate-400">
+                    上傳檔案進行惡意軟體分析
+                </p>
+            </div>
 
-            <div className="card">
-                {/* Backend status indicator */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '0.5rem',
-                    marginBottom: '1rem',
-                    padding: '0.5rem',
-                    borderRadius: '0.5rem',
-                    backgroundColor: isBackendOnline === null
-                        ? 'var(--color-bg-secondary, #f0f0f0)'
+            {/* Main Card */}
+            <div className="glass-card p-6">
+                {/* Backend Status Indicator */}
+                <div className="flex items-center justify-center gap-3 mb-6 p-3 rounded-lg bg-void/50">
+                    <div className={`status-dot ${isBackendOnline === null
+                        ? 'status-dot-checking animate-pulse'
                         : isBackendOnline
-                            ? 'rgba(34, 197, 94, 0.1)'
-                            : 'rgba(239, 68, 68, 0.1)',
-                    color: isBackendOnline === null
-                        ? 'var(--color-text-secondary)'
+                            ? 'status-dot-online'
+                            : 'status-dot-offline'
+                        }`} />
+                    <span className={`text-sm font-medium ${isBackendOnline === null
+                        ? 'text-slate-400'
                         : isBackendOnline
-                            ? 'rgb(34, 197, 94)'
-                            : 'rgb(239, 68, 68)',
-                    fontSize: '0.875rem'
-                }}>
-                    {isBackendOnline === null ? (
-                        <span>⏳ 檢查連線中...</span>
-                    ) : isBackendOnline ? (
-                        <span>🟢 後端已連線</span>
-                    ) : (
-                        <span>🔴 後端離線 - 無法上傳</span>
-                    )}
+                            ? 'text-matrix-green'
+                            : 'text-alert-red'
+                        }`}>
+                        {isBackendOnline === null
+                            ? '檢查連線中...'
+                            : isBackendOnline
+                                ? '後端已連線'
+                                : '後端離線 - 無法上傳'}
+                    </span>
                 </div>
+
+                {/* Holographic Drop Zone */}
                 <div
-                    className={`upload-zone ${isDragging ? 'dragging' : ''}`}
+                    className={`drop-zone holographic ${isDragging ? 'dragging' : ''}`}
                     onDrop={handleDrop}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
@@ -122,41 +126,63 @@ export default function UploadPage() {
                         id="file-input"
                         type="file"
                         onChange={handleFileSelect}
-                        style={{ display: 'none' }}
+                        className="hidden"
                     />
+
                     {file ? (
-                        <div>
-                            <p style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>📄 {file.name}</p>
-                            <p style={{ color: 'var(--color-text-secondary)' }}>
+                        <div className="text-center">
+                            <div className="text-5xl mb-4">📄</div>
+                            <p className="text-xl font-semibold text-neon-cyan mb-2">
+                                {file.name}
+                            </p>
+                            <p className="text-slate-400 font-mono text-sm">
                                 {(file.size / 1024 / 1024).toFixed(2)} MB
                             </p>
                         </div>
                     ) : (
-                        <div>
-                            <p style={{ fontSize: '1.25rem', marginBottom: '0.5rem' }}>
-                                拖放檔案到此處，或點擊選擇
+                        <div className="text-center">
+                            <div className="text-5xl mb-4 opacity-50">
+                                ⬆️
+                            </div>
+                            <p className="text-xl font-medium mb-2">
+                                拖放檔案到此處
                             </p>
-                            <p style={{ color: 'var(--color-text-secondary)' }}>
-                                支援任何檔案類型，最大 20MB
+                            <p className="text-slate-400 text-sm">
+                                或點擊選擇檔案 • 最大 20MB
                             </p>
                         </div>
                     )}
                 </div>
 
+                {/* Error Message */}
                 {error && (
-                    <div className="error-message" style={{ marginTop: '1rem' }}>
-                        {error}
+                    <div className="error-message mt-4">
+                        <span className="font-mono text-sm">⚠ {error}</span>
                     </div>
                 )}
 
+                {/* Upload Button */}
                 <button
-                    className="btn btn-primary"
+                    className={`btn-neon w-full mt-6 glitch-hover ${isUploading ? 'animate-pulse' : ''}`}
                     onClick={handleUpload}
                     disabled={!file || isUploading || isBackendOnline === false}
-                    style={{ marginTop: '1rem', width: '100%' }}
                 >
-                    {isUploading ? '上傳中...' : '開始分析'}
+                    {isUploading ? (
+                        <span className="flex items-center justify-center gap-2">
+                            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                            分析中...
+                        </span>
+                    ) : (
+                        '🚀 開始分析'
+                    )}
                 </button>
+            </div>
+
+            {/* Footer */}
+            <div className="mt-8 text-center">
+                <p className="text-slate-500 text-xs font-mono">
+                    MALSCAN v0.1.0 • CYBERSEC ANALYSIS PLATFORM
+                </p>
             </div>
         </div>
     )

@@ -1,10 +1,17 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { apiClient, JobStatus } from '../api/client'
+
+interface LocationState {
+    fileName?: string
+    fileSize?: number
+}
 
 export default function JobStatusPage() {
     const { jobId } = useParams<{ jobId: string }>()
     const navigate = useNavigate()
+    const location = useLocation()
+    const fileInfo = (location.state as LocationState) || {}
     const [job, setJob] = useState<JobStatus | null>(null)
     const [error, setError] = useState<string | null>(null)
 
@@ -16,7 +23,6 @@ export default function JobStatusPage() {
                 const status = await apiClient.getJobStatus(jobId)
                 setJob(status)
 
-                // 如果完成，跳轉到報告頁
                 if (status.status === 'done') {
                     navigate(`/reports/${jobId}`)
                 }
@@ -25,34 +31,10 @@ export default function JobStatusPage() {
             }
         }
 
-        // 初次載入
         fetchStatus()
-
-        // 輪詢（每 2 秒）
         const interval = setInterval(fetchStatus, 2000)
-
         return () => clearInterval(interval)
     }, [jobId, navigate])
-
-    if (error) {
-        return (
-            <div className="container">
-                <h1>❌ 錯誤</h1>
-                <div className="error-message">{error}</div>
-                <Link to="/" style={{ display: 'inline-block', marginTop: '1rem' }}>
-                    ← 返回上傳
-                </Link>
-            </div>
-        )
-    }
-
-    if (!job) {
-        return (
-            <div className="container">
-                <h1>⏳ 載入中...</h1>
-            </div>
-        )
-    }
 
     const statusLabels: Record<string, string> = {
         queued: '排隊中',
@@ -62,62 +44,153 @@ export default function JobStatusPage() {
     }
 
     const stageLabels: Record<string, string> = {
-        'file-type': '檔案類型偵測',
-        clamav: 'ClamAV 掃描',
-        yara: 'YARA 規則比對',
-        'ioc-extract': 'IOC 擷取',
-        sandbox: '沙箱分析',
+        'file-type': 'FILE_TYPE_DETECT',
+        clamav: 'CLAMAV_SCAN',
+        yara: 'YARA_MATCH',
+        'ioc-extract': 'IOC_EXTRACT',
+        sandbox: 'SANDBOX_ANALYZE',
+    }
+
+    if (error) {
+        return (
+            <div className="container">
+                <h1 className="text-3xl font-bold mb-6 text-alert-red">
+                    ❌ 錯誤
+                </h1>
+                <div className="error-message">
+                    <span className="font-mono">{error}</span>
+                </div>
+                <Link to="/" className="inline-block mt-6 text-neon-cyan hover:text-neon-purple">
+                    ← 返回上傳
+                </Link>
+            </div>
+        )
+    }
+
+    if (!job) {
+        return (
+            <div className="container">
+                <div className="glass-card p-8 text-center">
+                    <div className="text-4xl mb-4 animate-pulse">⏳</div>
+                    <p className="text-xl font-mono text-neon-cyan terminal-cursor">
+                        LOADING
+                    </p>
+                </div>
+            </div>
+        )
+    }
+
+    const statusColors: Record<string, string> = {
+        queued: 'text-slate-400',
+        scanning: 'text-neon-cyan',
+        done: 'text-matrix-green',
+        failed: 'text-alert-red',
     }
 
     return (
         <div className="container">
-            <h1>🔄 分析進度</h1>
+            {/* Header */}
+            <h1 className="text-3xl font-bold mb-6 bg-gradient-to-r from-neon-cyan to-neon-purple bg-clip-text text-transparent">
+                🔄 分析進度
+            </h1>
 
-            <div className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                    <span>Job ID</span>
-                    <code style={{ fontSize: '0.875rem' }}>{job.job_id}</code>
+            <div className="glass-card p-6">
+                {/* Terminal Header */}
+                <div className="flex items-center gap-2 mb-4 pb-4 border-b border-white/10">
+                    <div className="w-3 h-3 rounded-full bg-alert-red" />
+                    <div className="w-3 h-3 rounded-full bg-caution-yellow" />
+                    <div className="w-3 h-3 rounded-full bg-matrix-green" />
+                    <span className="ml-2 text-slate-500 text-sm font-mono">malscan-terminal</span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                    <span>狀態</span>
-                    <span className={`status-badge status-${job.status}`}>
-                        {statusLabels[job.status] || job.status}
-                    </span>
-                </div>
-
-                <div style={{ marginBottom: '1rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                        <span>進度</span>
-                        <span>{job.progress.percent}%</span>
+                {/* Job Info - Terminal Style */}
+                <div className="space-y-2 font-mono text-sm">
+                    {fileInfo.fileName && (
+                        <div className="flex items-start gap-2">
+                            <span className="text-neon-purple">$</span>
+                            <span className="text-slate-400">FILE:</span>
+                            <span className="text-white">{fileInfo.fileName}</span>
+                            {fileInfo.fileSize && (
+                                <span className="text-slate-500">
+                                    ({(fileInfo.fileSize / 1024 / 1024).toFixed(2)} MB)
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    <div className="flex items-start gap-2">
+                        <span className="text-neon-purple">$</span>
+                        <span className="text-slate-400">JOB_ID:</span>
+                        <span className="text-neon-cyan break-all">{job.job_id}</span>
                     </div>
-                    <div className="progress-bar">
+                    <div className="flex items-center gap-2">
+                        <span className="text-neon-purple">$</span>
+                        <span className="text-slate-400">STATUS:</span>
+                        <span className={`font-bold ${statusColors[job.status]}`}>
+                            {statusLabels[job.status] || job.status}
+                        </span>
+                    </div>
+                </div>
+
+                {/* HUD Progress Bar */}
+                <div className="mt-6">
+                    <div className="flex justify-between items-center mb-2">
+                        <span className="text-sm text-slate-400 font-mono">PROGRESS</span>
+                        <span className="text-sm font-mono text-neon-cyan">
+                            {job.progress.percent}%
+                        </span>
+                    </div>
+                    <div className="hud-progress">
                         <div
-                            className="progress-bar-fill"
+                            className="hud-progress-fill"
                             style={{ width: `${job.progress.percent}%` }}
                         />
+                        <div className="hud-progress-scan" />
                     </div>
                 </div>
 
+                {/* Current Stage */}
                 {job.progress.current_stage && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
-                        <span>當前階段</span>
-                        <span>{stageLabels[job.progress.current_stage] || job.progress.current_stage}</span>
+                    <div className="mt-6 p-4 bg-deep-space rounded-lg border border-neon-cyan/20">
+                        <div className="flex items-center gap-2 font-mono text-sm">
+                            <span className="text-neon-cyan animate-pulse">▶</span>
+                            <span className="text-matrix-green">EXECUTING:</span>
+                            <span className="text-white">
+                                {stageLabels[job.progress.current_stage] || job.progress.current_stage}
+                            </span>
+                            <span className="text-slate-500 animate-pulse">...</span>
+                        </div>
                     </div>
                 )}
 
-                <div style={{ color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
-                    完成 {job.progress.stages_done} / {job.progress.stages_total} 階段
+                {/* Stage Progress */}
+                <div className="mt-4 text-sm text-slate-400 font-mono">
+                    <span className="text-neon-purple">[</span>
+                    <span className="text-matrix-green">{job.progress.stages_done}</span>
+                    <span className="text-slate-500">/</span>
+                    <span className="text-white">{job.progress.stages_total}</span>
+                    <span className="text-neon-purple">]</span>
+                    <span className="ml-2">STAGES COMPLETED</span>
                 </div>
 
+                {/* Error Display */}
                 {job.status === 'failed' && job.error_message && (
-                    <div className="error-message" style={{ marginTop: '1rem' }}>
-                        {job.error_message}
+                    <div className="mt-6 p-4 rounded-lg bg-alert-red/10 border border-alert-red">
+                        <div className="font-mono text-sm">
+                            <span className="text-alert-red">ERROR:</span>
+                            <span className="text-white ml-2">{job.error_message}</span>
+                        </div>
                     </div>
                 )}
             </div>
 
-            <Link to="/">← 返回上傳</Link>
+            {/* Back Link */}
+            <Link
+                to="/"
+                className="inline-flex items-center gap-2 mt-6 text-sm font-mono text-slate-400 hover:text-neon-cyan transition-colors"
+            >
+                <span>←</span>
+                <span>返回上傳</span>
+            </Link>
         </div>
     )
 }

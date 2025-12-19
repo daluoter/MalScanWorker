@@ -59,10 +59,14 @@ async def publish_job(job_data: dict[str, Any]) -> None:
     async with connection:
         channel = await connection.channel()
 
-        # Declare queue (idempotent)
+        # Declare queue (idempotent) - must match worker's configuration
         await channel.declare_queue(
             settings.rabbitmq_queue,
             durable=True,
+            arguments={
+                "x-dead-letter-exchange": "",
+                "x-dead-letter-routing-key": "malscan-dlq",
+            },
         )
 
         # Prepare message
