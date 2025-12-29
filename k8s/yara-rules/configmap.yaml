@@ -4,40 +4,149 @@ metadata:
   name: yara-rules
   namespace: malscan
 data:
-  suspicious_strings.yar: |
+  eicar.yar: |
+    rule eicar {
+        meta:
+            description = "EICAR standard antivirus test file"
+            author = "MalScan"
+            severity = "high"
+            reference = "https://www.eicar.org/download-anti-malware-testfile/"
+        strings:
+            // EICAR test string in hex to avoid escape issues
+            $eicar = { 58 35 4F 21 50 25 40 41 50 5B 34 5C 50 5A 58 35 34 28 50 5E 29 37 43 43 29 37 7D 24 45 49 43 41 52 2D 53 54 41 4E 44 41 52 44 2D 41 4E 54 49 56 49 52 55 53 2D 54 45 53 54 2D 46 49 4C 45 21 24 48 2B 48 2A }
+        condition:
+            $eicar
+    }
+
+  webshells.yar: |
+    rule php_webshell {
+        meta:
+            description = "Detects common PHP webshell patterns"
+            author = "MalScan"
+            severity = "high"
+        strings:
+            $eval1 = "eval($_POST[" ascii nocase
+            $eval2 = "eval($_GET[" ascii nocase
+            $eval3 = "eval($_REQUEST[" ascii nocase
+            $eval4 = "eval(base64_decode(" ascii nocase
+            $assert1 = "assert($_POST[" ascii nocase
+            $system1 = "system($_POST[" ascii nocase
+            $passthru = "passthru(" ascii nocase
+            $shell_exec = "shell_exec(" ascii nocase
+        condition:
+            any of them
+    }
+
+    rule asp_webshell {
+        meta:
+            description = "Detects common ASP webshell patterns"
+            author = "MalScan"
+            severity = "high"
+        strings:
+            $eval1 = "eval(request(" ascii nocase
+            $eval2 = "eval request(" ascii nocase
+            $execute1 = "execute(request(" ascii nocase
+            $cmd1 = "cmd.exe /c" ascii nocase
+            $wscript = "wscript.shell" ascii nocase
+        condition:
+            any of them
+    }
+
+    rule jsp_webshell {
+        meta:
+            description = "Detects common JSP webshell patterns"
+            author = "MalScan"
+            severity = "high"
+        strings:
+            $runtime1 = "Runtime.getRuntime().exec(" ascii
+            $jscript = "<%@ Page Language=\"Jscript\"" ascii nocase
+            $cmd1 = "request.getParameter(\"cmd\")" ascii nocase
+        condition:
+            any of them
+    }
+
+  crypto_miners.yar: |
+    rule crypto_miner {
+        meta:
+            description = "Detects cryptocurrency mining software"
+            author = "MalScan"
+            severity = "high"
+        strings:
+            $stratum1 = "stratum+tcp://" ascii nocase
+            $stratum2 = "stratum+ssl://" ascii nocase
+            $pool1 = "pool.minexmr.com" ascii nocase
+            $pool2 = "supportxmr.com" ascii nocase
+            $nicehash = "nicehash.com" ascii nocase
+        condition:
+            any of them
+    }
+
+    rule crypto_miner_config {
+        meta:
+            description = "Detects miner configuration patterns"
+            author = "MalScan"
+            severity = "medium"
+        strings:
+            $wallet1 = "wallet_address" ascii nocase
+            $wallet2 = "wallet=" ascii nocase
+            $pool1 = "mining_pool" ascii nocase
+            $pool2 = "pool_password" ascii nocase
+        condition:
+            2 of them
+    }
+
+  suspicious.yar: |
     rule suspicious_api_calls {
-      meta:
-        description = "Detects suspicious Windows API calls"
-        severity = "medium"
-      strings:
-        $api1 = "VirtualAlloc" ascii
-        $api2 = "WriteProcessMemory" ascii
-        $api3 = "CreateRemoteThread" ascii
-        $api4 = "NtCreateThreadEx" ascii
-        $api5 = "RtlCreateUserThread" ascii
-      condition:
-        2 of them
+        meta:
+            description = "Detects suspicious Windows API calls"
+            author = "MalScan"
+            severity = "medium"
+        strings:
+            $api1 = "VirtualAlloc" ascii
+            $api2 = "WriteProcessMemory" ascii
+            $api3 = "CreateRemoteThread" ascii
+            $api4 = "NtCreateThreadEx" ascii
+            $api5 = "RtlCreateUserThread" ascii
+        condition:
+            2 of them
     }
 
     rule persistence_registry {
-      meta:
-        description = "Detects registry persistence mechanisms"
-        severity = "high"
-      strings:
-        $reg1 = "CurrentVersion\\Run" ascii nocase
-        $reg2 = "CurrentVersion\\RunOnce" ascii nocase
-        $reg3 = "Winlogon\\Shell" ascii nocase
-      condition:
-        any of them
+        meta:
+            description = "Detects registry persistence mechanisms"
+            author = "MalScan"
+            severity = "high"
+        strings:
+            $reg1 = "CurrentVersion\\Run" ascii nocase
+            $reg2 = "CurrentVersion\\RunOnce" ascii nocase
+            $reg3 = "Winlogon\\Shell" ascii nocase
+        condition:
+            any of them
     }
 
-  network_indicators.yar: |
+  network.yar: |
     rule network_iocs {
-      meta:
-        description = "Network behavior indicators"
-      strings:
-        $http = "http://" ascii
-        $https = "https://" ascii
-      condition:
-        any of them
+        meta:
+            description = "Network behavior indicators"
+            author = "MalScan"
+            severity = "low"
+        strings:
+            $http = "http://" ascii
+            $https = "https://" ascii
+        condition:
+            any of them
+    }
+
+    rule suspicious_network_patterns {
+        meta:
+            description = "Detects suspicious network patterns"
+            author = "MalScan"
+            severity = "medium"
+        strings:
+            $powershell_download = "downloadstring" ascii nocase
+            $wget = "wget " ascii nocase
+            $curl = "curl " ascii nocase
+            $certutil = "certutil" ascii nocase
+        condition:
+            2 of them
     }

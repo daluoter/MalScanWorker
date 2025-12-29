@@ -13,7 +13,7 @@ URL_PATTERN = re.compile(
 )
 
 DOMAIN_PATTERN = re.compile(
-    rb"(?<![a-zA-Z0-9.-])([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}(?![a-zA-Z0-9.-])",
+    rb"(?<![a-zA-Z0-9.-])(?:[a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z]{2,}(?![a-zA-Z0-9.-])",
     re.IGNORECASE,
 )
 

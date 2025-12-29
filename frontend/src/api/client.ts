@@ -40,6 +40,9 @@ export interface AvResult {
 export interface YaraHit {
     rule: string
     namespace: string
+    description: string
+    severity: string
+    author: string
     tags: string[]
     strings: string[]
 }

@@ -64,6 +64,7 @@ class YaraStage(Stage):
                 proc = await asyncio.create_subprocess_exec(
                     "yara",
                     "-s",  # Print matching strings
+                    "-m",  # Print metadata
                     str(rule_file),
                     str(ctx.file_path),
                     stdout=asyncio.subprocess.PIPE,
@@ -74,19 +75,45 @@ class YaraStage(Stage):
 
                 if proc.returncode == 0 and stdout:
                     # Parse output
-                    # Format: "rule_name file_path"
-                    # With -s: "rule_name file_path\n0xoffset:$string_id: matched_data"
+                    # With -m: "rule_name [key=value,key2=value2] file_path"
+                    # With -s: followed by "0xoffset:$string_id: matched_data"
                     lines = stdout.decode().strip().split("\n")
                     current_rule = None
 
                     for line in lines:
                         if not line.startswith("0x"):
-                            # Rule name line
-                            parts = line.split()
-                            if parts:
+                            # Rule name line with metadata
+                            # Format: "rule_name [meta1=val1,meta2=val2] /path/to/file"
+                            meta_dict: dict[str, str] = {}
+                            rule_name = ""
+
+                            # Check if metadata is present (enclosed in [])
+                            if "[" in line and "]" in line:
+                                bracket_start = line.index("[")
+                                bracket_end = line.index("]")
+                                rule_name = line[:bracket_start].strip()
+                                meta_str = line[bracket_start + 1 : bracket_end]
+
+                                # Parse metadata key=value pairs
+                                for meta_item in meta_str.split(","):
+                                    if "=" in meta_item:
+                                        key, value = meta_item.split("=", 1)
+                                        # Remove quotes from value
+                                        value = value.strip().strip('"')
+                                        meta_dict[key.strip()] = value
+                            else:
+                                # No metadata, just rule name and file path
+                                parts = line.split()
+                                if parts:
+                                    rule_name = parts[0]
+
+                            if rule_name:
                                 current_rule = {
-                                    "rule": parts[0],
+                                    "rule": rule_name,
                                     "namespace": rule_file.stem,
+                                    "description": meta_dict.get("description", ""),
+                                    "severity": meta_dict.get("severity", "medium"),
+                                    "author": meta_dict.get("author", ""),
                                     "tags": list[str](),
                                     "strings": list[str](),
                                 }

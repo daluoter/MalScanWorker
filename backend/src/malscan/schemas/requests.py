@@ -58,6 +58,9 @@ class YaraHit(BaseModel):
 
     rule: str
     namespace: str
+    description: str = ""
+    severity: str = "medium"
+    author: str = ""
     tags: list[str]
     strings: list[str]
 

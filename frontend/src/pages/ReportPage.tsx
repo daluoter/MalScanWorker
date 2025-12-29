@@ -167,19 +167,30 @@ export default function ReportPage() {
                     <h2 className="text-lg font-bold mb-4 text-neon-cyan">🎯 YARA 規則匹配</h2>
                     <div className="space-y-3">
                         {report.results.yara_hits.map((hit, index) => (
-                            <div key={index} className="stage-item">
-                                <div>
-                                    <span className="font-mono text-alert-red">{hit.rule}</span>
-                                    {hit.tags.length > 0 && (
-                                        <div className="flex gap-2 mt-1">
-                                            {hit.tags.map((tag, i) => (
-                                                <span key={i} className="text-xs px-2 py-0.5 rounded bg-neon-purple/20 text-neon-purple">
-                                                    {tag}
-                                                </span>
-                                            ))}
-                                        </div>
+                            <div key={index} className="stage-item flex-col items-start">
+                                <div className="flex items-center gap-3 w-full">
+                                    <span className="font-mono text-alert-red font-bold">{hit.rule}</span>
+                                    {hit.severity && (
+                                        <span className={`text-xs px-2 py-0.5 rounded font-mono ${hit.severity === 'high' ? 'bg-alert-red/20 text-alert-red' :
+                                                hit.severity === 'medium' ? 'bg-caution-yellow/20 text-caution-yellow' :
+                                                    'bg-slate-500/20 text-slate-400'
+                                            }`}>
+                                            {hit.severity.toUpperCase()}
+                                        </span>
                                     )}
                                 </div>
+                                {hit.description && (
+                                    <p className="text-sm text-slate-400 mt-1">{hit.description}</p>
+                                )}
+                                {hit.tags.length > 0 && (
+                                    <div className="flex gap-2 mt-2">
+                                        {hit.tags.map((tag, i) => (
+                                            <span key={i} className="text-xs px-2 py-0.5 rounded bg-neon-purple/20 text-neon-purple">
+                                                {tag}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
