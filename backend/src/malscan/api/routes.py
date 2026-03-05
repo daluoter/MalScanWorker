@@ -1,6 +1,8 @@
 """API routes for file upload, job status, and reports."""
 
 import hashlib
+import os
+import tempfile
 import uuid
 from typing import Any
 
@@ -14,11 +16,13 @@ from malscan.db import get_db
 from malscan.models import File, Job, JobStatus
 from malscan.queue import publish_job
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
-from malscan.storage import upload_file as upload_to_minio
+from malscan.storage import upload_file_path as upload_to_minio
 
 router = APIRouter()
 settings = get_settings()
 log = structlog.get_logger()
+
+CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
 
 @router.post(
@@ -49,14 +53,15 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
     """
     Upload a file for malware analysis.
 
-    - Calculates SHA256 hash
+    - Uses streaming to handle large files efficiently
+    - Calculates SHA256 hash incrementally
     - Stores file in MinIO
     - Creates file and job records in database
     - Publishes job to RabbitMQ
     - Returns job_id immediately (async processing)
     """
     try:
-        # Parse multipart form manually to handle large files
+        # Parse multipart form
         form = await request.form()
         file = form.get("file")
 
@@ -66,9 +71,6 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
                 detail="No file field in form data",
             )
 
-        # Read file content
-        content = await file.read()
-        file_size = len(content)
         filename = getattr(file, "filename", "unknown")
         content_type = getattr(file, "content_type", "application/octet-stream")
 
@@ -76,42 +78,64 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
             "file_upload_started",
             filename=filename,
             content_type=content_type,
-            size=file_size,
         )
 
-        # Check size limit
-        if file_size > settings.max_file_size:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": {
-                        "code": "FILE_TOO_LARGE",
-                        "message": "File size exceeds limit",
-                        "details": {
-                            "max_size_bytes": settings.max_file_size,
-                            "actual_size_bytes": file_size,
-                        },
-                    }
-                },
-            )
+        # Process file using streaming
+        hasher = hashlib.sha256()
+        file_size = 0
 
-        # Calculate hash
-        sha256_hash = hashlib.sha256(content).hexdigest()
+        # Create a temporary file to hold the upload
+        fd, temp_path = tempfile.mkstemp()
 
-        # Store file in MinIO (use SHA256 as storage key)
         try:
-            await upload_to_minio(content, sha256_hash, content_type)
-        except Exception as e:
-            log.error("minio_upload_failed", sha256=sha256_hash, error=str(e))
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": {
-                        "code": "STORAGE_ERROR",
-                        "message": f"Failed to store file: {e}",
-                    }
-                },
-            ) from e
+            with os.fdopen(fd, "wb") as temp_file:
+                while True:
+                    chunk = await file.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+
+                    file_size += len(chunk)
+
+                    # Check size limit dynamically to avoid writing huge files
+                    if file_size > settings.max_file_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail={
+                                "error": {
+                                    "code": "FILE_TOO_LARGE",
+                                    "message": "File size exceeds limit",
+                                    "details": {
+                                        "max_size_bytes": settings.max_file_size,
+                                        "actual_size_bytes": file_size,
+                                    },
+                                }
+                            },
+                        )
+
+                    hasher.update(chunk)
+                    temp_file.write(chunk)
+
+            sha256_hash = hasher.hexdigest()
+
+            # Store file in MinIO (use SHA256 as storage key)
+            try:
+                await upload_to_minio(temp_path, sha256_hash, content_type)
+            except Exception as e:
+                log.error("minio_upload_failed", sha256=sha256_hash, error=str(e))
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": {
+                            "code": "STORAGE_ERROR",
+                            "message": f"Failed to store file: {e}",
+                        }
+                    },
+                ) from e
+
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
         # Check for existing file by SHA256 (deduplication)
         stmt = select(File).where(File.sha256 == sha256_hash)

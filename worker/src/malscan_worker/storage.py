@@ -27,15 +27,21 @@ _executor = ThreadPoolExecutor(max_workers=4)
 # Get standard logging logger for tenacity before_sleep_log
 _logger = logging.getLogger(__name__)
 
+# Singleton MinIO client
+_minio_client: Minio | None = None
 
-def _get_minio_client() -> Minio:
-    """Create MinIO client instance."""
-    return Minio(
-        settings.minio_endpoint,
-        access_key=settings.minio_access_key,
-        secret_key=settings.minio_secret_key,
-        secure=settings.minio_secure,
-    )
+
+def get_minio_client() -> Minio:
+    """Get or create the MinIO client instance (Singleton)."""
+    global _minio_client
+    if _minio_client is None:
+        _minio_client = Minio(
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=settings.minio_secure,
+        )
+    return _minio_client
 
 
 @retry(
@@ -63,7 +69,7 @@ def _download_file_sync(key: str, dest_dir: Path) -> Path:
     Raises:
         Exception: If download fails after all retries.
     """
-    client = _get_minio_client()
+    client = get_minio_client()
     bucket = settings.minio_bucket_uploads
 
     # Create destination directory if needed

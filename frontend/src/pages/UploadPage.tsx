@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiClient } from '../api/client'
 
-const MAX_SIZE = 20 * 1024 * 1024 // 20MB
+const MAX_SIZE = 100 * 1024 * 1024 // 100MB
 
 export default function UploadPage() {
     const navigate = useNavigate()
@@ -25,7 +25,7 @@ export default function UploadPage() {
 
     const handleFile = useCallback((selectedFile: File) => {
         if (selectedFile.size > MAX_SIZE) {
-            setError(`檔案大小超過 20MB 限制（實際：${(selectedFile.size / 1024 / 1024).toFixed(2)}MB）`)
+            setError(`檔案大小超過 100MB 限制（實際：${(selectedFile.size / 1024 / 1024).toFixed(2)}MB）`)
             return
         }
         setError(null)
@@ -148,7 +148,7 @@ export default function UploadPage() {
                                 拖放檔案到此處
                             </p>
                             <p className="text-slate-400 text-sm">
-                                或點擊選擇檔案 • 最大 20MB
+                                或點擊選擇檔案 • 最大 100MB
                             </p>
                         </div>
                     )}

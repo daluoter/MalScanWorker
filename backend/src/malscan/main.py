@@ -7,6 +7,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from malscan.api.routes import router
 from malscan.config import get_settings
+from malscan.storage import init_buckets
 
 # Configure structlog
 structlog.configure(
@@ -20,8 +21,8 @@ structlog.configure(
 settings = get_settings()
 log = structlog.get_logger()
 
-# Increase max request body size for file uploads (50MB)
-MAX_REQUEST_BODY_SIZE = 50 * 1024 * 1024  # 50MB
+# Increase max request body size for file uploads (150MB to allow 100MB files + overhead)
+MAX_REQUEST_BODY_SIZE = 150 * 1024 * 1024
 
 app = FastAPI(
     title="MalScan API",
@@ -70,6 +71,18 @@ async def readiness_check() -> dict[str, str]:
 async def startup_event() -> None:
     """Application startup."""
     log.info("application_startup", cors_origins=cors_origins)
+
+    # Initialize MinIO buckets
+    try:
+        # Run sync initialization in event loop's executor
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, init_buckets)
+        log.info("minio_buckets_initialized")
+    except Exception as e:
+        log.error("minio_initialization_failed", error=str(e))
+        # Keep app running even if MinIO init fails, it might come back later
 
     # Auto-create database tables if they don't exist
     from malscan.db.engine import get_engine

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     log_format: str = "json"
 
     # File upload
-    max_file_size: int = 20 * 1024 * 1024  # 20MB
+    max_file_size: int = 100 * 1024 * 1024  # 100MB
 
     # Stages
     stages_total: int = 5
