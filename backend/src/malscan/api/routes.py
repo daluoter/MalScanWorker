@@ -1,5 +1,6 @@
 """API routes for file upload, job status, and reports."""
 
+import asyncio
 import hashlib
 import os
 import tempfile
@@ -10,6 +11,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from malscan.config import get_settings
 from malscan.db import get_db
@@ -251,6 +253,88 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
         updated_at=job.updated_at,
         error_message=job.error_message,
     )
+
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_job_status(job_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Stream the status of a job using Server-Sent Events (SSE).
+    """
+    log.info("job_status_stream_requested", job_id=job_id)
+
+    # Parse job_id to UUID
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id format") from None
+
+    # Check if job exists first
+    stmt = select(Job).where(Job.id == job_uuid)
+    result = await db.execute(stmt)
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    async def event_generator():
+        last_updated_at = None
+        last_status = None
+
+        try:
+            while True:
+                # If client disconnected, stop
+                if await request.is_disconnected():
+                    log.info("client_disconnected", job_id=job_id)
+                    break
+
+                # We need a new session per iteration because we are inside an async generator
+                # and the original Depends(get_db) session might be closed or we need fresh data
+                stmt = select(Job).where(Job.id == job_uuid)
+                result = await db.execute(stmt)
+                job = result.scalar_one_or_none()
+
+                if not job:
+                    break
+
+                # Only yield if something changed
+                if job.updated_at != last_updated_at or job.status != last_status:
+                    last_updated_at = job.updated_at
+                    last_status = job.status
+
+                    percent = (
+                        int((job.stages_done / job.stages_total) * 100)
+                        if job.stages_total > 0
+                        else 0
+                    )
+
+                    data = JobStatusResponse(
+                        job_id=str(job.id),
+                        status=job.status,
+                        progress={
+                            "current_stage": job.current_stage,
+                            "stages_done": job.stages_done,
+                            "stages_total": job.stages_total,
+                            "percent": percent,
+                        },
+                        updated_at=job.updated_at,
+                        error_message=job.error_message,
+                    )
+
+                    yield {"event": "message", "data": data.model_dump_json()}
+
+                    # Stop if job is done or failed
+                    if job.status in (JobStatus.DONE.value, JobStatus.FAILED.value):
+                        break
+
+                # Sleep a bit before checking again to avoid hammering the DB
+                await asyncio.sleep(1.0)
+
+                # Expire the job so next query hits the DB,
+                # not the SQLAlchemy session cache
+                db.expire(job)
+
+        except asyncio.CancelledError:
+            log.info("client_disconnected_via_cancel", job_id=job_id)
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/reports/{job_id}", response_model=ReportResponse)

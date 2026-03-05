@@ -100,10 +100,14 @@ export interface HealthResponse {
 }
 
 class ApiClient {
-    private baseUrl: string
+    public baseUrl: string
 
     constructor(baseUrl: string = API_BASE_URL) {
         this.baseUrl = baseUrl
+    }
+
+    getJobStreamUrl(jobId: string): string {
+        return `${this.baseUrl}/api/v1/jobs/${jobId}/stream`
     }
 
     async checkHealth(): Promise<boolean> {

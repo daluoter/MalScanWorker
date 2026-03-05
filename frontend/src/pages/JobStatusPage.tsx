@@ -18,22 +18,39 @@ export default function JobStatusPage() {
     useEffect(() => {
         if (!jobId) return
 
-        const fetchStatus = async () => {
-            try {
-                const status = await apiClient.getJobStatus(jobId)
-                setJob(status)
+        const url = apiClient.getJobStreamUrl(jobId)
+        const es = new EventSource(url)
 
-                if (status.status === 'done') {
+        es.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data) as JobStatus
+                setJob(data)
+
+                if (data.status === 'done') {
+                    es.close()
                     navigate(`/reports/${jobId}`)
+                } else if (data.status === 'failed') {
+                    es.close()
                 }
-            } catch (err) {
-                setError(err instanceof Error ? err.message : '無法取得狀態')
+            } catch {
+                // ignore malformed messages
             }
         }
 
-        fetchStatus()
-        const interval = setInterval(fetchStatus, 2000)
-        return () => clearInterval(interval)
+        es.onerror = () => {
+            // EventSource will auto-reconnect on transient errors.
+            // If the stream was intentionally closed (readyState CLOSED),
+            // fall back to a single REST fetch so the UI is never stuck.
+            if (es.readyState === EventSource.CLOSED) {
+                apiClient.getJobStatus(jobId).then(setJob).catch((err) => {
+                    setError(err instanceof Error ? err.message : '無法取得狀態')
+                })
+            }
+        }
+
+        return () => {
+            es.close()
+        }
     }, [jobId, navigate])
 
     const statusLabels: Record<string, string> = {
