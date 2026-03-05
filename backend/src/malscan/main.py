@@ -7,6 +7,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from malscan.api.routes import router
 from malscan.config import get_settings
+from malscan.queue import close_rabbitmq, init_rabbitmq
 from malscan.storage import init_buckets
 
 # Configure structlog
@@ -72,6 +73,14 @@ async def startup_event() -> None:
     """Application startup."""
     log.info("application_startup", cors_origins=cors_origins)
 
+    # Initialize RabbitMQ connection
+    try:
+        await init_rabbitmq()
+        log.info("rabbitmq_initialized")
+    except Exception as e:
+        log.error("rabbitmq_initialization_failed", error=str(e))
+        raise
+
     # Initialize MinIO buckets
     try:
         # Run sync initialization in event loop's executor
@@ -98,3 +107,9 @@ async def startup_event() -> None:
 async def shutdown_event() -> None:
     """Application shutdown."""
     log.info("application_shutdown")
+
+    # Close RabbitMQ connection
+    try:
+        await close_rabbitmq()
+    except Exception as e:
+        log.error("rabbitmq_shutdown_failed", error=str(e))

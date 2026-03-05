@@ -8,19 +8,19 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Worker settings loaded from environment variables."""
 
-    # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/malscan"
+    # Database (required - no default to enforce security)
+    database_url: str
 
-    # MinIO
-    minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
+    # MinIO (required - no default to enforce security)
+    minio_endpoint: str
+    minio_access_key: str
+    minio_secret_key: str
     minio_bucket_uploads: str = "uploads"
     minio_bucket_artifacts: str = "artifacts"
     minio_secure: bool = False
 
-    # RabbitMQ
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    # RabbitMQ (required - no default to enforce security)
+    rabbitmq_url: str
     rabbitmq_queue: str = "malscan.jobs"
 
     # Stage configuration

@@ -1,15 +1,30 @@
 """Pytest configuration and fixtures for backend tests."""
 
+import os
+import sys
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
-from malscan.api.routes import router
-from malscan.db import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
+# Set required environment variables BEFORE any other imports
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:test@localhost:5432/malscan")  # noqa: E402
+os.environ.setdefault("MINIO_ENDPOINT", "localhost:9000")  # noqa: E402
+os.environ.setdefault("MINIO_ACCESS_KEY", "minioadmin")  # noqa: E402
+os.environ.setdefault("MINIO_SECRET_KEY", "minioadmin")  # noqa: E402
+os.environ.setdefault("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")  # noqa: E402
+
+# Clear any cached settings to force reload with new env vars
+if "malscan" in sys.modules:  # noqa: E402
+    for mod in list(sys.modules.keys()):  # noqa: E402
+        if mod.startswith("malscan"):  # noqa: E402
+            del sys.modules[mod]  # noqa: E402
+
+import pytest  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from malscan.api.routes import router  # noqa: E402
+from malscan.db import get_db  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 
 # Create a test app without startup events to avoid DB connection

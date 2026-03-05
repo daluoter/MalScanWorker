@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from malscan.config import get_settings
-from malscan.db import get_db
+from malscan.db import get_db, get_session_factory
 from malscan.models import File, Job, JobStatus
 from malscan.queue import publish_job
 from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
@@ -25,6 +25,33 @@ settings = get_settings()
 log = structlog.get_logger()
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Sanitize uploaded filename to prevent path traversal and other attacks.
+
+    - Strips path components (../../etc/passwd -> passwd)
+    - Handles Windows path separators
+    - Removes null bytes
+    - Truncates to 255 characters
+    - Falls back to 'unnamed' if result is empty
+    """
+    # Replace Windows path separators with Unix ones, then get basename
+    filename = filename.replace(chr(92), "/")
+    filename = os.path.basename(filename)
+
+    # Remove null bytes
+    filename = filename.replace("\x00", "")
+
+    # Truncate to 255 characters (common filesystem limit)
+    if len(filename) > 255:
+        filename = filename[:255]
+
+    # Fallback for empty/whitespace-only names
+    if not filename.strip():
+        filename = "unnamed"
+
+    return filename
 
 
 @router.post(
@@ -74,6 +101,7 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
             )
 
         filename = getattr(file, "filename", "unknown")
+        filename = _sanitize_filename(filename)
         content_type = getattr(file, "content_type", "application/octet-stream")
 
         log.info(
@@ -256,7 +284,7 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
 
 
 @router.get("/jobs/{job_id}/stream")
-async def stream_job_status(job_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+async def stream_job_status(job_id: str, request: Request):
     """
     Stream the status of a job using Server-Sent Events (SSE).
     """
@@ -269,14 +297,17 @@ async def stream_job_status(job_id: str, request: Request, db: AsyncSession = De
         raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
     # Check if job exists first
-    stmt = select(Job).where(Job.id == job_uuid)
-    result = await db.execute(stmt)
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Job not found")
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(Job).where(Job.id == job_uuid)
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Job not found")
 
     async def event_generator():
         last_updated_at = None
         last_status = None
+        session_factory = get_session_factory()
 
         try:
             while True:
@@ -285,51 +316,47 @@ async def stream_job_status(job_id: str, request: Request, db: AsyncSession = De
                     log.info("client_disconnected", job_id=job_id)
                     break
 
-                # We need a new session per iteration because we are inside an async generator
-                # and the original Depends(get_db) session might be closed or we need fresh data
-                stmt = select(Job).where(Job.id == job_uuid)
-                result = await db.execute(stmt)
-                job = result.scalar_one_or_none()
+                # Create a new session per iteration
+                async with session_factory() as session:
+                    stmt = select(Job).where(Job.id == job_uuid)
+                    result = await session.execute(stmt)
+                    job = result.scalar_one_or_none()
 
-                if not job:
-                    break
-
-                # Only yield if something changed
-                if job.updated_at != last_updated_at or job.status != last_status:
-                    last_updated_at = job.updated_at
-                    last_status = job.status
-
-                    percent = (
-                        int((job.stages_done / job.stages_total) * 100)
-                        if job.stages_total > 0
-                        else 0
-                    )
-
-                    data = JobStatusResponse(
-                        job_id=str(job.id),
-                        status=job.status,
-                        progress={
-                            "current_stage": job.current_stage,
-                            "stages_done": job.stages_done,
-                            "stages_total": job.stages_total,
-                            "percent": percent,
-                        },
-                        updated_at=job.updated_at,
-                        error_message=job.error_message,
-                    )
-
-                    yield {"event": "message", "data": data.model_dump_json()}
-
-                    # Stop if job is done or failed
-                    if job.status in (JobStatus.DONE.value, JobStatus.FAILED.value):
+                    if not job:
                         break
+
+                    # Only yield if something changed
+                    if job.updated_at != last_updated_at or job.status != last_status:
+                        last_updated_at = job.updated_at
+                        last_status = job.status
+
+                        percent = (
+                            int((job.stages_done / job.stages_total) * 100)
+                            if job.stages_total > 0
+                            else 0
+                        )
+
+                        data = JobStatusResponse(
+                            job_id=str(job.id),
+                            status=job.status,
+                            progress={
+                                "current_stage": job.current_stage,
+                                "stages_done": job.stages_done,
+                                "stages_total": job.stages_total,
+                                "percent": percent,
+                            },
+                            updated_at=job.updated_at,
+                            error_message=job.error_message,
+                        )
+
+                        yield {"event": "message", "data": data.model_dump_json()}
+
+                        # Stop if job is done or failed
+                        if job.status in (JobStatus.DONE.value, JobStatus.FAILED.value):
+                            break
 
                 # Sleep a bit before checking again to avoid hammering the DB
                 await asyncio.sleep(1.0)
-
-                # Expire the job so next query hits the DB,
-                # not the SQLAlchemy session cache
-                db.expire(job)
 
         except asyncio.CancelledError:
             log.info("client_disconnected_via_cancel", job_id=job_id)
