@@ -2,16 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies: ClamAV, YARA, libmagic
+# Install system dependencies: libmagic
+# ClamAV and YARA are now handled differently
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clamav \
-    clamav-freshclam \
-    yara \
     libmagic1 \
     && rm -rf /var/lib/apt/lists/*
-
-# Update ClamAV virus database (best effort at build time)
-RUN freshclam || true
 
 # Install poetry
 RUN pip install poetry

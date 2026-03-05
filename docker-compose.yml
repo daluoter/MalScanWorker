@@ -36,6 +36,22 @@ services:
       timeout: 10s
       retries: 5
 
+  # ClamAV - AntiVirus Daemon (Offline Support)
+  clamav:
+    image: clamav/clamav:latest
+    ports:
+      - "3310:3310"
+    environment:
+      # Disable freshclam for offline environment compatibility
+      - CLAMAV_NO_FRESHCLAMD=true
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   # API Server
   api:
     build:
@@ -65,11 +81,15 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
       SANDBOX_MOCK: "true"
     depends_on:
       - minio
       - rabbitmq
+      - clamav
 
 volumes:
   minio_data:
   rabbitmq_data:
+  clamav_data:

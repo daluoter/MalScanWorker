@@ -65,7 +65,8 @@ async def test_run_pipeline_success(mocker, tmp_path):
 
     # Replace STAGES with mock stages
     mock_stages = [MockStage("stage1"), MockStage("stage2")]
-    mocker.patch("malscan_worker.pipeline.STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
     job_data = {
         "job_id": "test-job-id",
@@ -103,7 +104,8 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
 
     # Mock STAGES (second stage fails)
     mock_stages = [MockStage("stage1"), MockStage("stage2", should_fail=True)]
-    mocker.patch("malscan_worker.pipeline.STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
     job_data = {
         "job_id": "test-job-id",

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clamav
+  namespace: malscan
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clamav
+  template:
+    metadata:
+      labels:
+        app: clamav
+    spec:
+      containers:
+        - name: clamav
+          image: clamav/clamav:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3310
+          env:
+            - name: CLAMAV_NO_FRESHCLAMD
+              value: "true"
+          volumeMounts:
+            - name: clamav-data
+              mountPath: /var/lib/clamav
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          readinessProbe:
+            exec:
+              command:
+                - clamdscan
+                - --ping
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - clamdscan
+                - --ping
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - name: clamav-data
+          emptyDir: {}
+          # For offline environments, this can be changed to a hostPath or PVC containing the .cvd files

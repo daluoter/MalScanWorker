@@ -31,7 +31,8 @@ class Settings(BaseSettings):
     yara_rules_path: str = "/etc/yara/rules"
 
     # ClamAV
-    clamscan_path: str = "/usr/bin/clamscan"
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
 
     # Sandbox
     sandbox_enabled: bool = True

@@ -16,6 +16,7 @@ data:
   SANDBOX_ENABLED: "true"
   SANDBOX_MOCK: "true"
   YARA_RULES_PATH: "/etc/yara/rules"
-  CLAMSCAN_PATH: "/usr/bin/clamscan"
+  CLAMAV_HOST: "clamav"
+  CLAMAV_PORT: "3310"
   STAGE_TIMEOUT_SECONDS: "300"
   METRICS_PORT: "9090"
