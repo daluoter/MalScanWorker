@@ -106,8 +106,8 @@ class YaraStage(Stage):
                 # Extract matching strings
                 strings_list = []
                 for s in match.strings:
-                    # s is a tuple: (offset, string_identifier, string_data)
-                    string_id = s[1]
+                    # s is a yara.StringMatch object
+                    string_id = getattr(s, "identifier", "")
                     # decode to string or keep as repr if it's binary
                     if string_id not in strings_list:
                         strings_list.append(string_id)
