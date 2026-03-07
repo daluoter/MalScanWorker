@@ -1,0 +1,5 @@
+name: short-minio-retention
+status: proposed
+created: 2026-03-07
+description: "Shorten MinIO file retention time from 7 days to 1 day"
+author: daluoter

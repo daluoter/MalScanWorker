@@ -50,19 +50,19 @@ def init_buckets() -> None:
             client.make_bucket(bucket)
             log.info("bucket_created", bucket=bucket)
 
-        # Set lifecycle rule (7 days expiry)
+        # Set lifecycle rule (1 days expiry)
         lifecycle_config = LifecycleConfig(
             [
                 Rule(
                     status="Enabled",
-                    rule_id="7-days-expiry",
-                    expiration=Expiration(days=7),
+                    rule_id="1-day-expiry",
+                    expiration=Expiration(days=1),
                     rule_filter=Filter(prefix=""),
                 )
             ]
         )
         client.set_bucket_lifecycle(bucket, lifecycle_config)
-        log.info("bucket_lifecycle_configured", bucket=bucket, days=7)
+        log.info("bucket_lifecycle_configured", bucket=bucket, days=1)
 
     except S3Error as e:
         log.error("bucket_init_failed", bucket=bucket, error=str(e))
