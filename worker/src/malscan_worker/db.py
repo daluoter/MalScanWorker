@@ -20,10 +20,13 @@ _engine = create_async_engine(
     max_overflow=10,
 )
 
+
 async def get_job_for_context(job_id: str) -> Any | None:
     """Fetch Job record instance for pipeline context."""
     from sqlalchemy import select
+
     from malscan.models.job import Job
+
     async with AsyncSession(_engine) as session:
         stmt = select(Job).where(Job.id == UUID(job_id))
         result = await session.execute(stmt)

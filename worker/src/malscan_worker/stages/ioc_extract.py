@@ -1,7 +1,9 @@
 """IOC extraction stage using regex patterns."""
 
 import hashlib
+import os
 import re
+import tempfile
 from datetime import datetime, timezone
 
 from malscan.config import get_settings
@@ -117,30 +119,30 @@ class IocExtractStage(Stage):
             # Submission of Extracted URLs as Sub Jobs
             settings = get_settings()
             max_depth = getattr(settings, "max_job_depth", 3)
-            
+
             extracted_urls = urls[:50]  # Limit to 50 URLs for sub-jobs
             sub_jobs_created = 0
 
             if ctx.job and ctx.db and ctx.job.depth < max_depth:
                 submitter = await InternalJobSubmitter.get_instance()
-                
-                for idx, url in enumerate(extracted_urls):
+
+                for url in extracted_urls:
                     # Create .url file content
-                    url_content = f"[InternetShortcut]\nURL={url}\n".encode("utf-8")
+                    url_content = f"[InternetShortcut]\nURL={url}\n".encode()
                     url_sha256 = hashlib.sha256(url_content).hexdigest()
                     url_size = len(url_content)
-                    
+
                     # Sanitize URL for filename (very basic)
-                    safe_name = "url_" + hashlib.md5(url.encode()).hexdigest()[:8] + ".url"
-                    
-                    # Write temporarily to pass to submitter (MinIO upload needs a path)
-                    import tempfile
-                    import os
+                    safe_name = (
+                        "url_" + hashlib.md5(url.encode()).hexdigest()[:8] + ".url"
+                    )
+
+                    # Write temporarily to pass to submitter
                     fd, temp_path = tempfile.mkstemp(suffix=".url")
                     try:
                         with os.fdopen(fd, "wb") as f:
                             f.write(url_content)
-                            
+
                         # Submit as subjob
                         await submitter.submit_subjob(
                             db=ctx.db,
@@ -152,7 +154,7 @@ class IocExtractStage(Stage):
                             parent_job=ctx.job,
                         )
                         sub_jobs_created += 1
-                        
+
                     finally:
                         if os.path.exists(temp_path):
                             os.remove(temp_path)

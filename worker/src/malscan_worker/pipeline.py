@@ -7,16 +7,22 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from malscan_worker.config import get_settings
-from malscan_worker.db import update_job_result, update_job_stage, update_job_status, get_job_for_context, _engine
-from sqlalchemy.ext.asyncio import AsyncSession
+from malscan_worker.db import (
+    _engine,
+    get_job_for_context,
+    update_job_result,
+    update_job_stage,
+    update_job_status,
+)
 from malscan_worker.metrics import stage_latency
+from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
-from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.sandbox import SandboxStage
 from malscan_worker.stages.yara_scan import YaraStage
 from malscan_worker.storage import download_file

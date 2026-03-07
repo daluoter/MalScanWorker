@@ -1,16 +1,12 @@
 """Internal job submission utility for recursive analysis."""
 
 import json
-import logging
 from typing import Optional
-from uuid import UUID
 
 import aio_pika
 import structlog
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 from malscan.config import get_settings
 from malscan.models.file import File
@@ -19,6 +15,7 @@ from malscan.storage import upload_file_path as upload_to_minio
 
 log = structlog.get_logger()
 settings = get_settings()
+
 
 class InternalJobSubmitter:
     """Singleton class to manage MQ connections and submit sub-jobs safely."""
@@ -30,7 +27,7 @@ class InternalJobSubmitter:
 
     def __new__(cls) -> "InternalJobSubmitter":
         if cls._instance is None:
-            cls._instance = super(InternalJobSubmitter, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
         return cls._instance
 
     @classmethod
@@ -96,13 +93,21 @@ class InternalJobSubmitter:
 
         if existing_file:
             file_record = existing_file
-            log.info("sub_file_exists_de_duped", file_id=str(file_record.id), sha256=sha256_hash)
+            log.info(
+                "sub_file_exists_de_duped",
+                file_id=str(file_record.id),
+                sha256=sha256_hash,
+            )
         else:
             # 2. Upload to MinIO (only if it's a new unique file)
             try:
                 await upload_to_minio(file_path, sha256_hash, content_type)
             except Exception as e:
-                log.error("minio_sub_upload_failed", sha256=sha256_hash, error=str(e))
+                log.error(
+                    "minio_sub_upload_failed",
+                    sha256=sha256_hash,
+                    error=str(e),
+                )
                 raise
 
             # Insert new file into DB
@@ -114,7 +119,11 @@ class InternalJobSubmitter:
             )
             db.add(file_record)
             await db.flush()
-            log.info("sub_file_created", file_id=str(file_record.id), sha256=sha256_hash)
+            log.info(
+                "sub_file_created",
+                file_id=str(file_record.id),
+                sha256=sha256_hash,
+            )
 
         # 3. Create Job record in DB (State: QUEUED)
         new_depth = parent_job.depth + 1
@@ -145,7 +154,7 @@ class InternalJobSubmitter:
             "sha256": sha256_hash,
             "original_filename": filename,
         }
-        
+
         try:
             message = aio_pika.Message(
                 body=json.dumps(message_body).encode(),
@@ -158,10 +167,14 @@ class InternalJobSubmitter:
                 )
             log.info("sub_job_published_to_mq", job_id=str(sub_job.id))
         except Exception as e:
-            # MQ failed, revert job status to failed so it doesn't cause a zombie job
-            log.error("rabbitmq_sub_publish_failed", job_id=str(sub_job.id), error=str(e))
+            # MQ failed, revert job status to failed
+            log.error(
+                "rabbitmq_sub_publish_failed",
+                job_id=str(sub_job.id),
+                error=str(e),
+            )
             sub_job.status = JobStatus.FAILED.value
-            sub_job.error_message = f"Failed to publish to MQ: {str(e)}"
+            sub_job.error_message = f"Failed to publish to MQ: {e!s}"
             await db.commit()
             return sub_job
 

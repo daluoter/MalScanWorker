@@ -6,8 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from malscan.models.job import Job
 
 @dataclass
