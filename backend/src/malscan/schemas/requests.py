@@ -29,10 +29,17 @@ class JobStatusResponse(BaseModel):
     """Response for GET /jobs/{job_id}."""
 
     job_id: str
+    parent_job_id: str | None = None
+    depth: int = 0
     status: Literal["queued", "scanning", "done", "failed"]
     progress: JobProgress
     updated_at: datetime
     error_message: str | None
+    
+    # Sub-job statistics overview
+    total_sub: int = 0
+    completed_sub: int = 0
+    malicious_sub: int = 0
 
 
 class FileMetadata(BaseModel):

@@ -4,7 +4,9 @@ import hashlib
 import re
 from datetime import datetime, timezone
 
+from malscan.config import get_settings
 from malscan_worker.stages.base import Stage, StageContext, StageResult
+from malscan_worker.utils.submission import InternalJobSubmitter
 
 # IOC patterns
 URL_PATTERN = re.compile(
@@ -105,10 +107,55 @@ class IocExtractStage(Stage):
 
             ips = [ip for ip in ips if is_public_ip(ip)]
 
+            ips = [ip for ip in ips if is_public_ip(ip)]
+
             # Calculate file hashes
             md5_hash = hashlib.md5(content).hexdigest()
             sha1_hash = hashlib.sha1(content).hexdigest()
             sha256_hash = hashlib.sha256(content).hexdigest()
+
+            # Submission of Extracted URLs as Sub Jobs
+            settings = get_settings()
+            max_depth = getattr(settings, "max_job_depth", 3)
+            
+            extracted_urls = urls[:50]  # Limit to 50 URLs for sub-jobs
+            sub_jobs_created = 0
+
+            if ctx.job and ctx.db and ctx.job.depth < max_depth:
+                submitter = await InternalJobSubmitter.get_instance()
+                
+                for idx, url in enumerate(extracted_urls):
+                    # Create .url file content
+                    url_content = f"[InternetShortcut]\nURL={url}\n".encode("utf-8")
+                    url_sha256 = hashlib.sha256(url_content).hexdigest()
+                    url_size = len(url_content)
+                    
+                    # Sanitize URL for filename (very basic)
+                    safe_name = "url_" + hashlib.md5(url.encode()).hexdigest()[:8] + ".url"
+                    
+                    # Write temporarily to pass to submitter (MinIO upload needs a path)
+                    import tempfile
+                    import os
+                    fd, temp_path = tempfile.mkstemp(suffix=".url")
+                    try:
+                        with os.fdopen(fd, "wb") as f:
+                            f.write(url_content)
+                            
+                        # Submit as subjob
+                        await submitter.submit_subjob(
+                            db=ctx.db,
+                            file_path=temp_path,
+                            filename=safe_name,
+                            content_type="application/internet-shortcut",
+                            sha256_hash=url_sha256,
+                            file_size=url_size,
+                            parent_job=ctx.job,
+                        )
+                        sub_jobs_created += 1
+                        
+                    finally:
+                        if os.path.exists(temp_path):
+                            os.remove(temp_path)
 
             ended_at = datetime.now(timezone.utc)
             duration_ms = int((ended_at - started_at).total_seconds() * 1000)
@@ -128,6 +175,7 @@ class IocExtractStage(Stage):
                         "sha1": sha1_hash,
                         "sha256": sha256_hash,
                     },
+                    "sub_jobs_created": sub_jobs_created,
                 },
                 artifacts=[],
                 error=None,

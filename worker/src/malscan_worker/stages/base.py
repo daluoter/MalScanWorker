@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from malscan.models.job import Job
+
 @dataclass
 class StageContext:
     """Context passed to each stage."""
@@ -18,6 +21,8 @@ class StageContext:
     original_filename: str
     file_path: Path | None
     previous_results: list["StageResult"] = field(default_factory=list)
+    job: Job | None = field(default=None)
+    db: AsyncSession | None = field(default=None)
 
 
 @dataclass

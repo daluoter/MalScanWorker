@@ -47,5 +47,17 @@ class Job(Base):
         nullable=False,
     )
 
-    # Relationship to file
+    # Hierarchical Analysis Fields
+    parent_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    
+    # Sub-jobs Aggregation Counters
+    total_sub: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_sub: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    malicious_sub: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Relationships
     file: Mapped["File"] = relationship("File", back_populates="jobs")  # noqa: F821
+    sub_jobs: Mapped[list["Job"]] = relationship("Job", backref="parent", cascade="all, delete-orphan", passive_deletes=True)

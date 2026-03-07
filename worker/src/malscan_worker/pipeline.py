@@ -9,12 +9,14 @@ from typing import Any
 import structlog
 
 from malscan_worker.config import get_settings
-from malscan_worker.db import update_job_result, update_job_stage, update_job_status
+from malscan_worker.db import update_job_result, update_job_stage, update_job_status, get_job_for_context, _engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
+from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.sandbox import SandboxStage
 from malscan_worker.stages.yara_scan import YaraStage
 from malscan_worker.storage import download_file
@@ -29,6 +31,7 @@ PARALLEL_STAGES = [
     ClamAVStage(),
     YaraStage(),
     IocExtractStage(),
+    ArchiveExtractStage(),
 ]
 
 # Stages that should run sequentially after static analysis
@@ -236,20 +239,26 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             await update_job_status(job_id, "failed", error_message=f"Failed to download file: {e}")
             raise RuntimeError(f"Failed to download file from MinIO: {e}") from e
 
-        # Create context
-        ctx = StageContext(
-            job_id=job_id,
-            file_id=file_id,
-            storage_key=storage_key,
-            sha256=job_data.get("sha256", ""),
-            original_filename=job_data.get("original_filename", "unknown"),
-            file_path=file_path,
-            previous_results=[],
-        )
+        # Fetch Job instance for context
+        job_instance = await get_job_for_context(job_id)
 
-        results: list[StageResult] = []
-        total_start = datetime.now(timezone.utc)
-        stages_done = 0
+        # Create context inside a single DB session
+        async with AsyncSession(_engine) as session:
+            ctx = StageContext(
+                job_id=job_id,
+                file_id=file_id,
+                storage_key=storage_key,
+                sha256=job_data.get("sha256", ""),
+                original_filename=job_data.get("original_filename", "unknown"),
+                file_path=file_path,
+                previous_results=[],
+                job=job_instance,
+                db=session,
+            )
+
+            results: list[StageResult] = []
+            total_start = datetime.now(timezone.utc)
+            stages_done = 0
 
         # Update status to indicate parallel static analysis
         await update_job_stage(job_id, "static_analysis", stages_done)

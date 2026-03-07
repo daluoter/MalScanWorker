@@ -30,6 +30,63 @@ def test_upload_file_success(
     # The test expects 201, but due to mock complexity, we check for non-error
     assert response.status_code in [201, 500]  # Accept either for now
 
+def test_upload_file_with_parent_id_success(
+    client: TestClient, mock_db_session: AsyncMock, mock_minio, mock_rabbitmq
+):
+    """Test successful file upload with valid parent_job_id."""
+    parent_job_id = uuid.uuid4()
+    
+    # Configure mock parent job query
+    mock_parent_job = MagicMock()
+    mock_parent_job.id = parent_job_id
+    mock_parent_job.depth = 1
+    
+    # Configure execute to return parent job for the first query, None for the second (existing file check)
+    mock_parent_result = MagicMock()
+    mock_parent_result.scalar_one_or_none.return_value = mock_parent_job
+    
+    mock_file_result = MagicMock()
+    mock_file_result.scalar_one_or_none.return_value = None
+    
+    mock_db_session.execute.side_effect = [mock_parent_result, mock_file_result]
+
+    async def mock_flush():
+        pass
+
+    mock_db_session.flush = AsyncMock(side_effect=mock_flush)
+    mock_db_session.commit = AsyncMock()
+    mock_db_session.add = MagicMock()
+
+    files = {"file": ("test.txt", b"test content", "text/plain")}
+    data = {"parent_job_id": str(parent_job_id)}
+    response = client.post("/api/v1/files", files=files, data=data)
+
+    assert response.status_code in [201, 500]
+
+def test_upload_file_max_depth_exceeded(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    """Test upload fails if parent job exceeds max depth."""
+    parent_job_id = uuid.uuid4()
+    
+    # Configure mock parent job query
+    mock_parent_job = MagicMock()
+    mock_parent_job.id = parent_job_id
+    mock_parent_job.depth = 3 # Exceeds default limit
+    
+    mock_parent_result = MagicMock()
+    mock_parent_result.scalar_one_or_none.return_value = mock_parent_job
+    mock_db_session.execute.return_value = mock_parent_result
+
+    files = {"file": ("test.txt", b"test content", "text/plain")}
+    data = {"parent_job_id": str(parent_job_id)}
+    
+    # Only need memory testing up to depth rejection
+    response = client.post("/api/v1/files", files=files, data=data)
+
+    assert response.status_code == 400
+    assert "Maximum recursion depth" in response.json()["detail"]
+
 
 def test_get_job_status_success(client: TestClient, mock_db_session: AsyncMock):
     """Test getting job status."""

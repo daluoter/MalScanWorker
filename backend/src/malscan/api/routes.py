@@ -69,6 +69,10 @@ def _sanitize_filename(filename: str) -> str:
                                 "type": "string",
                                 "format": "binary",
                                 "description": "File to upload for malware analysis",
+                            },
+                            "parent_job_id": {
+                                "type": "string",
+                                "description": "Optional ID of the parent job (for recursive analysis)",
                             }
                         },
                         "required": ["file"],
@@ -78,7 +82,10 @@ def _sanitize_filename(filename: str) -> str:
         }
     },
 )
-async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> UploadResponse:
+async def upload_file(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -93,12 +100,35 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
         # Parse multipart form
         form = await request.form()
         file = form.get("file")
+        parent_job_id_str = form.get("parent_job_id")
 
-        if file is None:
+        if file is None or isinstance(file, str):
             raise HTTPException(
                 status_code=422,
-                detail="No file field in form data",
+                detail="No file field in form data or field is not a file",
             )
+
+        # Validate parent_job_id if provided
+        parent_job = None
+        new_depth = 0
+        if parent_job_id_str and isinstance(parent_job_id_str, str):
+            try:
+                parent_job_uuid = uuid.UUID(parent_job_id_str)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid parent_job_id format") from None
+                
+            stmt = select(Job).where(Job.id == parent_job_uuid)
+            result = await db.execute(stmt)
+            parent_job = result.scalar_one_or_none()
+            
+            if not parent_job:
+                raise HTTPException(status_code=400, detail="Parent job not found")
+                
+            max_depth = getattr(settings, "max_job_depth", 3)
+            if parent_job.depth >= max_depth:
+                raise HTTPException(status_code=400, detail=f"Maximum recursion depth ({max_depth}) reached")
+            
+            new_depth = parent_job.depth + 1
 
         filename = getattr(file, "filename", "unknown")
         filename = _sanitize_filename(filename)
@@ -192,6 +222,8 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
             file_id=file_record.id,
             status=JobStatus.QUEUED.value,
             stages_total=settings.stages_total,
+            parent_job_id=parent_job.id if parent_job else None,
+            depth=new_depth,
         )
         db.add(job_record)
         await db.commit()
@@ -271,6 +303,8 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
 
     return JobStatusResponse(
         job_id=str(job.id),
+        parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
+        depth=job.depth,
         status=job.status,
         progress={
             "current_stage": job.current_stage,
@@ -280,6 +314,9 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
         },
         updated_at=job.updated_at,
         error_message=job.error_message,
+        total_sub=job.total_sub,
+        completed_sub=job.completed_sub,
+        malicious_sub=job.malicious_sub,
     )
 
 
@@ -338,6 +375,8 @@ async def stream_job_status(job_id: str, request: Request):
 
                         data = JobStatusResponse(
                             job_id=str(job.id),
+                            parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
+                            depth=job.depth,
                             status=job.status,
                             progress={
                                 "current_stage": job.current_stage,
@@ -347,6 +386,9 @@ async def stream_job_status(job_id: str, request: Request):
                             },
                             updated_at=job.updated_at,
                             error_message=job.error_message,
+                            total_sub=job.total_sub,
+                            completed_sub=job.completed_sub,
+                            malicious_sub=job.malicious_sub,
                         )
 
                         yield {"event": "message", "data": data.model_dump_json()}
