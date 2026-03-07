@@ -72,7 +72,7 @@ def _sanitize_filename(filename: str) -> str:
                             },
                             "parent_job_id": {
                                 "type": "string",
-                                "description": "Optional ID of the parent job (for recursive analysis)",
+                                "description": "Optional parent job ID",
                             }
                         },
                         "required": ["file"],
@@ -115,19 +115,26 @@ async def upload_file(
             try:
                 parent_job_uuid = uuid.UUID(parent_job_id_str)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid parent_job_id format") from None
-                
+                raise HTTPException(
+                    status_code=400, detail="Invalid parent_job_id format"
+                ) from None
+
             stmt = select(Job).where(Job.id == parent_job_uuid)
             result = await db.execute(stmt)
             parent_job = result.scalar_one_or_none()
-            
+
             if not parent_job:
-                raise HTTPException(status_code=400, detail="Parent job not found")
-                
+                raise HTTPException(
+                    status_code=400, detail="Parent job not found"
+                )
+
             max_depth = getattr(settings, "max_job_depth", 3)
             if parent_job.depth >= max_depth:
-                raise HTTPException(status_code=400, detail=f"Maximum recursion depth ({max_depth}) reached")
-            
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum recursion depth ({max_depth}) reached",
+                )
+
             new_depth = parent_job.depth + 1
 
         filename = getattr(file, "filename", "unknown")

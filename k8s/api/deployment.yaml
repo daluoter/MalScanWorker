@@ -22,8 +22,8 @@ spec:
         runAsUser: 1000
       containers:
         - name: api
-          image: ghcr.io/OWNER/malscan-api:latest
-          # NOTE: Replace OWNER with your GitHub username
+          image: ghcr.io/daluoter/malscan-api:latest
+          # NOTE: Replace daluoter with your GitHub username
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

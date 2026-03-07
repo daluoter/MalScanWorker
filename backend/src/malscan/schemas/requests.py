@@ -35,7 +35,7 @@ class JobStatusResponse(BaseModel):
     progress: JobProgress
     updated_at: datetime
     error_message: str | None
-    
+
     # Sub-job statistics overview
     total_sub: int = 0
     completed_sub: int = 0

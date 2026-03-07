@@ -22,7 +22,7 @@ spec:
         runAsUser: 1000
       containers:
         - name: worker
-          image: ghcr.io/OWNER/malscan-worker:latest
+          image: ghcr.io/daluoter/malscan-worker:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9090
