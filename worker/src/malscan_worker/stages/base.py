@@ -6,9 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from malscan.models.job import Job
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from malscan.models.job import Job
 
 @dataclass
 class StageContext:

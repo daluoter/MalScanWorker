@@ -5,13 +5,12 @@ from typing import Optional
 
 import aio_pika
 import structlog
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from malscan.config import get_settings
 from malscan.models.file import File
 from malscan.models.job import Job, JobStatus
 from malscan.storage import upload_file_path as upload_to_minio
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger()
 settings = get_settings()

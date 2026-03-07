@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from malscan.config import get_settings
+
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
