@@ -60,6 +60,9 @@ class Job(Base):
 
     # Relationships
     file: Mapped["File"] = relationship("File", back_populates="jobs")  # noqa: F821
+    parent: Mapped["Job | None"] = relationship(
+        "Job", back_populates="sub_jobs", remote_side="Job.id"
+    )
     sub_jobs: Mapped[list["Job"]] = relationship(
-        "Job", backref="parent", cascade="all, delete-orphan", passive_deletes=True
+        "Job", back_populates="parent", cascade="all, delete-orphan", passive_deletes=True
     )
