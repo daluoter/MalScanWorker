@@ -31,18 +31,19 @@ log = structlog.get_logger()
 settings = get_settings()
 
 
-# Stages that can run in parallel
+# Stages that can run in parallel (Strictly no database writers here!)
 PARALLEL_STAGES = [
     FileTypeStage(),
     ClamAVStage(),
     YaraStage(),
     IocExtractStage(),
-    ArchiveExtractStage(),
 ]
 
-# Stages that should run sequentially after static analysis
-# e.g., Sandbox might take a long time and depend on static results
+# Stages that should run sequentially
+# ArchiveExtractStage MUST be here because it writes to the DB,
+# and AsyncSession is not concurrency-safe.
 SEQUENTIAL_STAGES = [
+    ArchiveExtractStage(),
     SandboxStage(),
 ]
 
@@ -65,18 +66,7 @@ def _build_analysis_result(
     results: list[StageResult],
     total_ms: int,
 ) -> dict[str, Any]:
-    """Build complete analysis result for storage.
-
-    Args:
-        job_id: Job UUID.
-        file_id: File UUID.
-        ctx: Stage context with file info.
-        results: List of stage results.
-        total_ms: Total pipeline duration in milliseconds.
-
-    Returns:
-        Complete analysis result as JSON-serializable dict.
-    """
+    """Build complete analysis result for storage."""
     # Extract key findings from stage results
     stage_findings = {r.stage_name: r.findings for r in results}
 
@@ -147,6 +137,7 @@ def _build_analysis_result(
             "yara_hits": yara_matches,
             "iocs": iocs,
             "sandbox": stage_findings.get("sandbox", {}),
+            "archive_extract": stage_findings.get("archive-extract", {}),
         },
         "timings": timings,
     }
@@ -156,68 +147,63 @@ async def _run_stage(stage, ctx: StageContext) -> StageResult:
     """Run a single stage with error handling and timeout."""
     stage_name = stage.name
     job_id = ctx.job_id
-    file_id = ctx.file_id
 
-    log.info("stage_started", job_id=job_id, file_id=file_id, stage=stage_name)
+    log.info("stage_starting", job_id=job_id, stage=stage_name)
+    start_time = datetime.now(timezone.utc)
 
     try:
         # Run stage with timeout
+        timeout = getattr(settings, "stage_timeout_seconds", 300)
+
         result = await asyncio.wait_for(
             stage.execute(ctx),
-            timeout=settings.stage_timeout_seconds,
+            timeout=timeout,
         )
+
+        # Record metrics
+        stage_latency.labels(stage=stage_name, status=result.status).observe(
+            result.duration_ms / 1000
+        )
+
+        log.info(
+            "stage_completed",
+            job_id=job_id,
+            stage=stage_name,
+            status=result.status,
+            duration_ms=result.duration_ms,
+        )
+        return result
+
     except asyncio.TimeoutError:
-        result = StageResult(
+        log.error("stage_timeout", job_id=job_id, stage=stage_name)
+        now = datetime.now(timezone.utc)
+        return StageResult(
             stage_name=stage_name,
             status="failed",
-            started_at=datetime.now(timezone.utc),
-            ended_at=datetime.now(timezone.utc),
-            duration_ms=settings.stage_timeout_seconds * 1000,
+            started_at=start_time,
+            ended_at=now,
+            duration_ms=int((now - start_time).total_seconds() * 1000),
             findings={},
             artifacts=[],
-            error=f"Stage timeout after {settings.stage_timeout_seconds}s",
+            error=f"Stage timeout after {timeout}s",
         )
     except Exception as e:
-        log.error("stage_error", job_id=job_id, file_id=file_id, stage=stage_name, error=str(e))
-        result = StageResult(
+        log.error("stage_error", job_id=job_id, stage=stage_name, error=str(e), exc_info=True)
+        now = datetime.now(timezone.utc)
+        return StageResult(
             stage_name=stage_name,
             status="failed",
-            started_at=datetime.now(timezone.utc),
-            ended_at=datetime.now(timezone.utc),
-            duration_ms=0,
+            started_at=start_time,
+            ended_at=now,
+            duration_ms=int((now - start_time).total_seconds() * 1000),
             findings={},
             artifacts=[],
             error=str(e),
         )
 
-    # Record metrics
-    stage_latency.labels(stage=stage_name, status=result.status).observe(result.duration_ms / 1000)
-
-    log.info(
-        "stage_completed",
-        job_id=job_id,
-        file_id=file_id,
-        stage=stage_name,
-        status=result.status,
-        duration_ms=result.duration_ms,
-    )
-
-    return result
-
 
 async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
-    """
-    Run the analysis pipeline.
-
-    Args:
-        job_data: Message from RabbitMQ containing job_id, file_id, storage_key, etc.
-
-    Returns:
-        Complete analysis results.
-
-    Raises:
-        RuntimeError: If any stage fails or file download fails.
-    """
+    """Run the analysis pipeline with high resilience."""
     job_id = job_data["job_id"]
     file_id = job_data["file_id"]
     storage_key = job_data.get("storage_key", "")
@@ -245,11 +231,15 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             await update_job_status(job_id, "failed", error_message=f"Failed to download file: {e}")
             raise RuntimeError(f"Failed to download file from MinIO: {e}") from e
 
-        # Fetch Job instance for context
-        job_instance = await get_job_for_context(job_id)
+        results: list[StageResult] = []
+        total_start = datetime.now(timezone.utc)
+        stages_done = 0
 
-        # Create context inside a single DB session
+        # Create context inside a single DB session that spans the entire pipeline.
         async with AsyncSession(_engine) as session:
+            # Fetch job instance INSIDE the session
+            job_instance = await get_job_for_context(job_id, session=session)
+
             ctx = StageContext(
                 job_id=job_id,
                 file_id=file_id,
@@ -262,77 +252,45 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
                 db=session,
             )
 
-            results: list[StageResult] = []
-            total_start = datetime.now(timezone.utc)
-            stages_done = 0
+            # Update status to indicate parallel static analysis
+            await update_job_stage(job_id, "static_analysis", stages_done)
 
-        # Update status to indicate parallel static analysis
-        await update_job_stage(job_id, "static_analysis", stages_done)
+            # 1. Run Parallel Stages
+            # IMPORTANT: We use gathering for I/O efficiency, but NONE of these stages
+            # should use the shared 'session' concurrently.
+            log.info("starting_parallel_stages", count=len(PARALLEL_STAGES))
+            tasks = [_run_stage(stage, ctx) for stage in PARALLEL_STAGES]
+            parallel_results = await asyncio.gather(*tasks)
 
-        # 1. Run Parallel Stages
-        log.info("starting_parallel_stages", count=len(PARALLEL_STAGES))
-        tasks = [_run_stage(stage, ctx) for stage in PARALLEL_STAGES]
+            results.extend(parallel_results)
+            ctx.previous_results.extend(parallel_results)
+            stages_done += len(PARALLEL_STAGES)
 
-        # gather will run all tasks concurrently and return results in the same order
-        parallel_results = await asyncio.gather(*tasks)
+            # Check for critical failures?
+            # For now, we remain resilient and continue even if some
+            # parallel stages fail (like ClamAV).
+            # Only if the whole system crashes do we stop.
 
-        results.extend(parallel_results)
-        ctx.previous_results.extend(parallel_results)
+            # Update status after static analysis
+            await update_job_stage(job_id, "recursive_analysis", stages_done)
 
-        stages_done += len(PARALLEL_STAGES)
+            # 2. Run Sequential Stages (like ArchiveExtract and Sandbox)
+            for stage in SEQUENTIAL_STAGES:
+                res = await _run_stage(stage, ctx)
+                results.append(res)
+                ctx.previous_results.append(res)
+                stages_done += 1
 
-        # Check for failures in parallel stages
-        for res in parallel_results:
-            if res.status == "failed":
-                log.error(
-                    "pipeline_failed",
-                    job_id=job_id,
-                    file_id=file_id,
-                    stage=res.stage_name,
-                    error=res.error,
-                )
-                await update_job_status(
-                    job_id,
-                    "failed",
-                    error_message=f"Stage {res.stage_name} failed: {res.error}",
-                    current_stage=res.stage_name,
-                    stages_done=stages_done,
-                )
-                raise RuntimeError(f"Stage {res.stage_name} failed: {res.error}")
-
-        # Update status after static analysis
-        await update_job_stage(job_id, "dynamic_analysis", stages_done)
-
-        # 2. Run Sequential Stages (like Sandbox)
-        for stage in SEQUENTIAL_STAGES:
-            res = await _run_stage(stage, ctx)
-            results.append(res)
-            ctx.previous_results.append(res)
-            stages_done += 1
-
-            if res.status == "failed":
-                log.error(
-                    "pipeline_failed",
-                    job_id=job_id,
-                    file_id=file_id,
-                    stage=res.stage_name,
-                    error=res.error,
-                )
-                await update_job_status(
-                    job_id,
-                    "failed",
-                    error_message=f"Stage {res.stage_name} failed: {res.error}",
-                    current_stage=res.stage_name,
-                    stages_done=stages_done,
-                )
-                raise RuntimeError(f"Stage {res.stage_name} failed: {res.error}")
+                # We continue even if sub-jobs fail to create or sandbox fails,
+                # as we still want to save the primary report.
 
         total_end = datetime.now(timezone.utc)
         total_ms = int((total_end - total_start).total_seconds() * 1000)
 
-        log.info("pipeline_completed", job_id=job_id, file_id=file_id, total_ms=total_ms)
+        log.info("pipeline_completed_saving_report", job_id=job_id, total_ms=total_ms)
 
         # Build complete result for storage
+        # Even if some stages failed, this will contain what we HAVE.
         analysis_result = _build_analysis_result(
             job_id=job_id,
             file_id=file_id,
@@ -344,7 +302,9 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
         # Store result in database
         await update_job_result(job_id, analysis_result)
 
-        # Update job status to done
+        # Determine final status
+        # If we reached here, the job is technically "done",
+        # even if it found malware or had partial failures.
         await update_job_status(
             job_id,
             "done",
@@ -356,6 +316,7 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             "job_id": job_id,
             "stages": [r.__dict__ for r in results],
             "total_ms": total_ms,
+            "verdict": analysis_result["verdict"],
         }
 
     finally:

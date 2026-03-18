@@ -30,6 +30,7 @@ def test_upload_file_success(
     # The test expects 201, but due to mock complexity, we check for non-error
     assert response.status_code in [201, 500]  # Accept either for now
 
+
 def test_upload_file_with_parent_id_success(
     client: TestClient, mock_db_session: AsyncMock, mock_minio, mock_rabbitmq
 ):
@@ -64,9 +65,7 @@ def test_upload_file_with_parent_id_success(
     assert response.status_code in [201, 500]
 
 
-def test_upload_file_max_depth_exceeded(
-    client: TestClient, mock_db_session: AsyncMock
-):
+def test_upload_file_max_depth_exceeded(client: TestClient, mock_db_session: AsyncMock):
     """Test upload fails if parent job exceeds max depth."""
     parent_job_id = uuid.uuid4()
 

@@ -89,6 +89,17 @@ class Iocs(BaseModel):
     hashes: Hashes
 
 
+class ArchiveExtractResult(BaseModel):
+    """Archive extraction result."""
+
+    archive_type: str | None = None
+    extracted_count: int = 0
+    sub_jobs_created: int = 0
+    total_extracted_bytes: int = 0
+    malicious: bool = False
+    reason: str | None = None
+
+
 class SandboxBehavior(BaseModel):
     """Sandbox behavior entry."""
 
@@ -121,6 +132,7 @@ class AnalysisResults(BaseModel):
     yara_hits: list[YaraHit]
     iocs: Iocs
     sandbox: SandboxResult
+    archive_extract: ArchiveExtractResult | None = None
 
 
 class StageTiming(BaseModel):
@@ -138,6 +150,16 @@ class Timings(BaseModel):
     stages: list[StageTiming]
 
 
+class ChildJobSummary(BaseModel):
+    """Summary of a child job."""
+
+    job_id: str
+    filename: str
+    sha256: str
+    status: str
+    verdict: str | None = None
+
+
 class ReportResponse(BaseModel):
     """Response for GET /reports/{job_id}."""
 
@@ -148,6 +170,7 @@ class ReportResponse(BaseModel):
     results: AnalysisResults
     timings: Timings
     created_at: datetime
+    child_jobs: list[ChildJobSummary] = []
 
 
 class ApiError(BaseModel):

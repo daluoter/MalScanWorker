@@ -9,6 +9,7 @@ import structlog
 from malscan_worker.config import get_settings
 from malscan_worker.consumer import start_consumer
 from malscan_worker.metrics import start_metrics_server
+from malscan_worker.utils.submission import InternalJobSubmitter
 
 # Configure structlog
 structlog.configure(
@@ -45,6 +46,14 @@ async def main() -> None:
     log.info("metrics_server_started", port=settings.metrics_port)
 
     try:
+        # Pre-initialize the InternalJobSubmitter MQ connection at startup.
+        # This prevents a race condition where lazy-initialization of the aio_pika
+        # connection inside ArchiveExtractStage would interrupt SQLAlchemy's async
+        # greenlet context, causing "greenlet_spawn has not been called" errors on
+        # the first job that processes an archive.
+        await InternalJobSubmitter.get_instance()
+        log.info("internal_job_submitter_initialized")
+
         # Start RabbitMQ consumer
         await start_consumer(shutdown_event)
     except Exception as e:
@@ -52,6 +61,9 @@ async def main() -> None:
         raise
     finally:
         # Cleanup
+        submitter_instance = InternalJobSubmitter._instance
+        if submitter_instance:
+            await submitter_instance.close()
         await metrics_runner.cleanup()
         log.info("worker_shutdown_complete")
 

@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies: libmagic
+# Install system dependencies: libmagic, unrar (for RAR archive extraction)
 # ClamAV and YARA are now handled differently
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
+    unrar \
     && rm -rf /var/lib/apt/lists/*
 
 # Install poetry

@@ -1,6 +1,23 @@
 version: '3.8'
 
 services:
+  # PostgreSQL - Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: malscan
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # MinIO - Object Storage
   minio:
     image: minio/minio:latest
@@ -60,13 +77,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/malscan}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/malscan}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000
     depends_on:
+      - postgres
       - minio
       - rabbitmq
 
@@ -76,7 +94,7 @@ services:
       context: ./worker
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/malscan}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/malscan}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -85,11 +103,13 @@ services:
       CLAMAV_PORT: 3310
       SANDBOX_MOCK: "true"
     depends_on:
+      - postgres
       - minio
       - rabbitmq
       - clamav
 
 volumes:
+  postgres_data:
   minio_data:
   rabbitmq_data:
   clamav_data:

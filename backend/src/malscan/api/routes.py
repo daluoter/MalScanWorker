@@ -11,6 +11,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from sse_starlette.sse import EventSourceResponse
 
 from malscan.config import get_settings
@@ -73,7 +74,7 @@ def _sanitize_filename(filename: str) -> str:
                             "parent_job_id": {
                                 "type": "string",
                                 "description": "Optional parent job ID",
-                            }
+                            },
                         },
                         "required": ["file"],
                     }
@@ -82,10 +83,7 @@ def _sanitize_filename(filename: str) -> str:
         }
     },
 )
-async def upload_file(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-) -> UploadResponse:
+async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> UploadResponse:
     """
     Upload a file for malware analysis.
 
@@ -124,9 +122,7 @@ async def upload_file(
             parent_job = result.scalar_one_or_none()
 
             if not parent_job:
-                raise HTTPException(
-                    status_code=400, detail="Parent job not found"
-                )
+                raise HTTPException(status_code=400, detail="Parent job not found")
 
             max_depth = getattr(settings, "max_job_depth", 3)
             if parent_job.depth >= max_depth:
@@ -256,8 +252,20 @@ async def upload_file(
             await publish_job(job_message)
         except Exception as e:
             log.error("rabbitmq_publish_failed", job_id=str(job_record.id), error=str(e))
-            # Note: Job is already in DB, so we don't rollback. Worker can be triggered manually.
-            # In production, consider a retry mechanism or dead-letter queue.
+            # Mark job as failed so it won't be stuck in QUEUED forever
+            job_record.status = JobStatus.FAILED.value
+            job_record.error_message = f"Failed to publish to queue: {e}"
+            await db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "code": "QUEUE_PUBLISH_FAILED",
+                        "message": "Failed to submit job to processing queue. Please try again.",
+                        "job_id": str(job_record.id),
+                    }
+                },
+            ) from e
 
         return UploadResponse(
             job_id=str(job_record.id),
@@ -428,10 +436,14 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
-    # Query job from database
-    stmt = select(Job).where(Job.id == job_uuid)
+    # Query job from database including its file and sub-jobs
+    stmt = (
+        select(Job)
+        .where(Job.id == job_uuid)
+        .options(joinedload(Job.file), joinedload(Job.sub_jobs).joinedload(Job.file))
+    )
     result = await db.execute(stmt)
-    job = result.scalar_one_or_none()
+    job = result.unique().scalar_one_or_none()
 
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -447,7 +459,26 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     if job.result is None:
         raise HTTPException(status_code=404, detail="Report not available yet")
 
-    # Return stored result with created_at
+    # Format child jobs summary
+    child_jobs = []
+    for sub in job.sub_jobs:
+        # We need to get verdict from sub.result if it exists
+        sub_verdict = "unknown"
+        if sub.result and isinstance(sub.result, dict):
+            sub_verdict = sub.result.get("verdict", "unknown")
+
+        child_jobs.append(
+            {
+                "job_id": str(sub.id),
+                "filename": sub.file.filename if sub.file else "unknown",
+                "sha256": sub.file.sha256 if sub.file else "unknown",
+                "status": sub.status,
+                "verdict": sub_verdict,
+            }
+        )
+
+    # Return stored result with created_at and child_jobs
     report = dict(job.result)
     report["created_at"] = job.created_at.isoformat()
+    report["child_jobs"] = child_jobs
     return report

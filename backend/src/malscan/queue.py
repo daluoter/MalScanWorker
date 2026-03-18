@@ -114,6 +114,15 @@ async def publish_job(job_data: dict[str, Any]) -> None:
     """
     if not is_rabbitmq_initialized():
         raise RuntimeError("RabbitMQ is not initialized. Call init_rabbitmq() first.")
+    if _channel is None or _channel.is_closed:
+        raise RuntimeError("RabbitMQ channel is closed. Reconnection required.")
+
+    log.debug(
+        "rabbitmq_publish_attempt",
+        job_id=job_data.get("job_id"),
+        connection_closed=_connection.is_closed if _connection else True,
+        channel_closed=_channel.is_closed if _channel else True,
+    )
 
     # Prepare message
     message_body = json.dumps(job_data).encode()
