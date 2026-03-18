@@ -12,6 +12,8 @@ export default function ReportPage() {
         if (!jobId) return
 
         const fetchReport = async () => {
+            setReport(null) // Reset state for new jobId
+            setError(null)
             try {
                 const data = await apiClient.getReport(jobId)
                 setReport(data)
@@ -87,15 +89,23 @@ export default function ReportPage() {
         clamav: 'CLAMAV_SCAN',
         yara: 'YARA_MATCH',
         'ioc-extract': 'IOC_EXTRACT',
+        'archive-extract': 'ARCHIVE_EXTRACT',
         sandbox: 'SANDBOX_ANALYZE',
     }
 
     return (
         <div className="container">
             {/* Header */}
-            <h1 className="text-3xl font-bold mb-6 bg-gradient-to-r from-neon-cyan to-neon-purple bg-clip-text text-transparent">
-                📋 分析報告
-            </h1>
+            <div className="flex items-center justify-between mb-6">
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-neon-cyan to-neon-purple bg-clip-text text-transparent">
+                    📋 分析報告
+                </h1>
+                {report.file.mime.includes('7z') || report.file.mime.includes('zip') || report.file.mime.includes('rar') ? (
+                    <span className="px-3 py-1 bg-neon-cyan/20 text-neon-cyan text-xs font-mono rounded-full border border-neon-cyan/30 animate-pulse">
+                        📦 ARCHIVE
+                    </span>
+                ) : null}
+            </div>
 
             {/* Verdict Card - Prominent Neon Border */}
             <div className={`verdict-card ${verdictClasses[report.verdict]} mb-6 animate-glow-pulse`}>
@@ -114,6 +124,78 @@ export default function ReportPage() {
                     </div>
                 </div>
             </div>
+
+            {/* Archive Extraction Info (If present) */}
+            {report.results.archive_extract && report.results.archive_extract.archive_type && (
+                <div className="glass-card p-6 mb-4 border-l-4 border-neon-cyan">
+                    <h2 className="text-lg font-bold mb-4 text-neon-cyan flex items-center gap-2">
+                        <span>📦 解壓縮資訊</span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-neon-cyan/10 border border-neon-cyan/30 uppercase">
+                            {report.results.archive_extract.archive_type}
+                        </span>
+                    </h2>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono text-sm">
+                        <div>
+                            <p className="text-slate-400 mb-1">FILES</p>
+                            <p className="text-white text-lg font-bold">{report.results.archive_extract.extracted_count}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-400 mb-1">SUB-JOBS</p>
+                            <p className="text-neon-cyan text-lg font-bold">{report.results.archive_extract.sub_jobs_created}</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-400 mb-1">UNCOMPRESSED</p>
+                            <p className="text-white text-lg font-bold">{(report.results.archive_extract.total_extracted_bytes / 1024).toFixed(1)} KB</p>
+                        </div>
+                        <div>
+                            <p className="text-slate-400 mb-1">DECOMPRESSION</p>
+                            <p className={report.results.archive_extract.malicious ? 'text-alert-red text-lg font-bold' : 'text-matrix-green text-lg font-bold'}>
+                                {report.results.archive_extract.malicious ? '⚠️ WARN' : '✓ OK'}
+                            </p>
+                        </div>
+                    </div>
+                    {report.results.archive_extract.reason && (
+                        <p className="mt-4 text-xs text-caution-yellow italic">
+                            NOTE: {report.results.archive_extract.reason}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            {/* Child Jobs / Extracted Files List */}
+            {report.child_jobs.length > 0 && (
+                <div className="glass-card p-6 mb-4">
+                    <h2 className="text-lg font-bold mb-4 text-neon-purple">📂 衍生檔案分析 ({report.child_jobs.length})</h2>
+                    <div className="space-y-2">
+                        {report.child_jobs.map((child) => (
+                            <Link
+                                key={child.job_id}
+                                to={`/jobs/${child.job_id}`}
+                                className="stage-item flex items-center justify-between hover:bg-white/5 transition-all group"
+                            >
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <span className="text-xl group-hover:scale-110 transition-transform">📄</span>
+                                    <div className="overflow-hidden">
+                                        <p className="text-sm font-bold truncate group-hover:text-neon-cyan">{child.filename}</p>
+                                        <p className="text-[10px] text-slate-500 font-mono truncate uppercase">{child.sha256}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-4 flex-shrink-0">
+                                    <span className={`text-xs px-2 py-0.5 rounded font-mono ${
+                                        child.verdict === 'malicious' ? 'bg-alert-red/10 text-alert-red border border-alert-red/20' :
+                                        child.verdict === 'suspicious' ? 'bg-caution-yellow/10 text-caution-yellow border border-caution-yellow/20' :
+                                        child.verdict === 'clean' ? 'bg-matrix-green/10 text-matrix-green border border-matrix-green/20' :
+                                        'bg-slate-500/10 text-slate-400'
+                                    }`}>
+                                        {(child.verdict || 'PENDING').toUpperCase()}
+                                    </span>
+                                    <span className="text-slate-600 font-mono text-xs group-hover:translate-x-1 transition-transform">→</span>
+                                </div>
+                            </Link>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* File Info */}
             <div className="glass-card p-6 mb-4">

@@ -79,11 +79,26 @@ export interface Report {
             network_connections: Array<{ dst_ip: string; dst_port: number; protocol: string }>
             is_mock: boolean
         }
+        archive_extract?: {
+            archive_type: string | null
+            extracted_count: number
+            sub_jobs_created: number
+            total_extracted_bytes: number
+            malicious: boolean
+            reason: string | null
+        }
     }
     timings: {
         total_ms: number
         stages: StageTiming[]
     }
+    child_jobs: Array<{
+        job_id: string
+        filename: string
+        sha256: string
+        status: string
+        verdict: string | null
+    }>
     created_at: string
 }
 
@@ -148,8 +163,17 @@ class ApiClient {
         const response = await fetch(`${this.baseUrl}/api/v1/jobs/${jobId}`)
 
         if (!response.ok) {
-            const error: ApiError = await response.json()
-            throw new Error(error.error.message)
+            let errorMessage = '取得工作狀態失敗'
+            try {
+                const errorData = await response.json()
+                errorMessage = errorData?.detail?.error?.message ||
+                               errorData?.error?.message ||
+                               errorData?.detail ||
+                               errorMessage
+            } catch {
+                errorMessage = response.statusText
+            }
+            throw new Error(errorMessage)
         }
 
         return response.json()
@@ -159,8 +183,17 @@ class ApiClient {
         const response = await fetch(`${this.baseUrl}/api/v1/reports/${jobId}`)
 
         if (!response.ok) {
-            const error: ApiError = await response.json()
-            throw new Error(error.error.message)
+            let errorMessage = '取得報告失敗'
+            try {
+                const errorData = await response.json()
+                errorMessage = errorData?.detail?.error?.message ||
+                               errorData?.error?.message ||
+                               errorData?.detail ||
+                               errorMessage
+            } catch {
+                errorMessage = response.statusText
+            }
+            throw new Error(errorMessage)
         }
 
         return response.json()
