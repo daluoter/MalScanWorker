@@ -75,3 +75,6 @@ poetry.lock
 # Coverage
 coverage/
 *.lcov
+
+# Claude
+everything-claude-code/

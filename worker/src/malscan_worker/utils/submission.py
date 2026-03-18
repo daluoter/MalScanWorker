@@ -2,6 +2,7 @@
 
 import json
 from typing import Optional
+from uuid import UUID
 
 import aio_pika
 import structlog
@@ -9,7 +10,8 @@ from malscan.config import get_settings
 from malscan.models.file import File
 from malscan.models.job import Job, JobStatus
 from malscan.storage import upload_file_path as upload_to_minio
-from sqlalchemy import select
+from malscan_worker.db import _engine
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger()
@@ -63,92 +65,116 @@ class InternalJobSubmitter:
 
     async def submit_subjob(
         self,
-        db: AsyncSession,
+        *,
         file_path: str,
         filename: str,
         content_type: str,
         sha256_hash: str,
         file_size: int,
-        parent_job: Job,
-    ) -> Job | None:
+        parent_job_id: str,
+        parent_job_depth: int,
+    ) -> str | None:
         """Submit a new sub-job for analysis.
-        Follows strictly: 1. Hash/De-dupe -> 2. MinIO -> 3. DB (QUEUED) -> 4. MQ Publish.
-        If step 4 fails, revert DB status to FAILED.
+
+        Uses its own independent DB session to avoid polluting the caller's
+        session (which would expire all ORM objects on commit and cause
+        "greenlet_spawn has not been called" errors in SQLAlchemy async).
+
+        Args:
+            file_path: Path to the extracted file on disk.
+            filename: Original filename of the extracted file.
+            content_type: MIME content type.
+            sha256_hash: SHA256 hash of the extracted file.
+            file_size: Size in bytes.
+            parent_job_id: Parent job UUID as string.
+            parent_job_depth: Recursion depth of the parent job.
+
+        Returns:
+            The sub-job UUID as string, or None if skipped/failed.
         """
         # Ensure parent constraints
-        if parent_job.depth >= getattr(settings, "max_job_depth", 3):
+        max_depth = getattr(settings, "max_job_depth", 3)
+        if parent_job_depth >= max_depth:
             log.warning(
                 "max_recursion_depth_reached",
-                parent_job_id=str(parent_job.id),
-                depth=parent_job.depth,
+                parent_job_id=parent_job_id,
+                depth=parent_job_depth,
                 filename=filename,
             )
             return None
 
-        # 1. Deduplication using DB Query
-        stmt = select(File).where(File.sha256 == sha256_hash)
-        result = await db.execute(stmt)
-        existing_file = result.scalar_one_or_none()
+        # Use an independent DB session so we never expire the pipeline's
+        # shared session objects.
+        async with AsyncSession(_engine) as db:
+            # 1. Deduplication using DB Query
+            stmt = select(File).where(File.sha256 == sha256_hash)
+            result = await db.execute(stmt)
+            existing_file = result.scalar_one_or_none()
 
-        if existing_file:
-            file_record = existing_file
-            log.info(
-                "sub_file_exists_de_duped",
-                file_id=str(file_record.id),
-                sha256=sha256_hash,
-            )
-        else:
-            # 2. Upload to MinIO (only if it's a new unique file)
-            try:
-                await upload_to_minio(file_path, sha256_hash, content_type)
-            except Exception as e:
-                log.error(
-                    "minio_sub_upload_failed",
+            if existing_file:
+                file_record = existing_file
+                log.info(
+                    "sub_file_exists_de_duped",
+                    file_id=str(file_record.id),
                     sha256=sha256_hash,
-                    error=str(e),
                 )
-                raise
+            else:
+                # 2. Upload to MinIO (only if it's a new unique file)
+                try:
+                    await upload_to_minio(file_path, sha256_hash, content_type)
+                except Exception as e:
+                    log.error(
+                        "minio_sub_upload_failed",
+                        sha256=sha256_hash,
+                        error=str(e),
+                    )
+                    raise
 
-            # Insert new file into DB
-            file_record = File(
-                sha256=sha256_hash,
-                size=file_size,
-                filename=filename,
-                content_type=content_type,
+                # Insert new file into DB
+                file_record = File(
+                    sha256=sha256_hash,
+                    size=file_size,
+                    filename=filename,
+                    content_type=content_type,
+                )
+                db.add(file_record)
+                await db.flush()
+                log.info(
+                    "sub_file_created",
+                    file_id=str(file_record.id),
+                    sha256=sha256_hash,
+                )
+
+            # 3. Create Job record in DB (State: QUEUED)
+            new_depth = parent_job_depth + 1
+            sub_job = Job(
+                file_id=file_record.id,
+                status=JobStatus.QUEUED.value,
+                stages_total=settings.stages_total,
+                parent_job_id=UUID(parent_job_id),
+                depth=new_depth,
             )
-            db.add(file_record)
+            db.add(sub_job)
+
+            # Flush to get the ID, then capture before commit expires objects
             await db.flush()
-            log.info(
-                "sub_file_created",
-                file_id=str(file_record.id),
-                sha256=sha256_hash,
-            )
+            sub_job_id = str(sub_job.id)
+            file_id_str = str(file_record.id)
 
-        # 3. Create Job record in DB (State: QUEUED)
-        new_depth = parent_job.depth + 1
-        sub_job = Job(
-            file_id=file_record.id,
-            status=JobStatus.QUEUED.value,
-            stages_total=settings.stages_total,
-            parent_job_id=parent_job.id,
-            depth=new_depth,
-        )
-        db.add(sub_job)
-        await db.commit()
-        await db.refresh(sub_job)
+            await db.commit()
 
         log.info(
             "sub_job_created",
-            job_id=str(sub_job.id),
-            parent_id=str(parent_job.id),
+            job_id=sub_job_id,
+            parent_id=parent_job_id,
             filename=filename,
         )
 
-        # 4. Publish to MQ
+        # 4. Publish to MQ (outside of DB session)
         await self._ensure_connection()
         message_body = {
-            "job_id": str(sub_job.id),
-            "file_id": str(file_record.id),
+            "job_id": sub_job_id,
+            "file_id": file_id_str,
             "storage_key": sha256_hash,
             "sha256": sha256_hash,
             "original_filename": filename,
@@ -164,17 +190,24 @@ class InternalJobSubmitter:
                     message,
                     routing_key=settings.rabbitmq_queue,
                 )
-            log.info("sub_job_published_to_mq", job_id=str(sub_job.id))
+            log.info("sub_job_published_to_mq", job_id=sub_job_id)
         except Exception as e:
-            # MQ failed, revert job status to failed
+            # MQ failed — update job status via explicit UPDATE
             log.error(
                 "rabbitmq_sub_publish_failed",
-                job_id=str(sub_job.id),
+                job_id=sub_job_id,
                 error=str(e),
             )
-            sub_job.status = JobStatus.FAILED.value
-            sub_job.error_message = f"Failed to publish to MQ: {e!s}"
-            await db.commit()
-            return sub_job
+            async with AsyncSession(_engine) as db:
+                await db.execute(
+                    update(Job)
+                    .where(Job.id == UUID(sub_job_id))
+                    .values(
+                        status=JobStatus.FAILED.value,
+                        error_message=f"Failed to publish to MQ: {e!s}",
+                    )
+                )
+                await db.commit()
+            return None
 
-        return sub_job
+        return sub_job_id

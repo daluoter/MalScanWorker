@@ -216,51 +216,89 @@ https://random-words-here.trycloudflare.com
 
 ## 本機開發
 
-### 本地資料庫設定
+開發時，我們需要兩個部分：
+1. **基礎設施（Infra）**：PostgreSQL, MinIO, RabbitMQ, ClamAV
+2. **應用程式（App）**：前端、後端 API、Worker
 
-後端需要 PostgreSQL 資料庫。本地開發可使用 Docker 快速啟動：
+> ⚠️ **避免「幽靈消費者」問題 (Ghost Consumer)**
+>
+> 如果你打算使用 `poetry run` 在本機啟動 Worker 進行開發除錯，**絕對不要**使用 `docker compose up -d` 啟動全部服務！
+> 因為 `docker-compose.yml` 中也包含了一個 `worker` 服務，若同時啟動，會導致 RabbitMQ 上出現兩個 consumers，造成部分任務被 Docker 中的舊版 Worker 搶走，導致分析結果異常。
+>
+> **正確的做法**：只啟動基礎設施容器，然後在本機手動啟動應用程式。
+
+### 1. 啟動基礎設施 (PostgreSQL, MinIO, RabbitMQ, ClamAV)
+
+在專案根目錄執行，僅啟動所需的基礎設施，**不啟動** API 和 Worker：
 
 ```bash
-# 1. 啟動本地 PostgreSQL
-docker run -d \
-  --name malscan-postgres \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=malscan \
-  -p 5432:5432 \
-  postgres:15
-
-# 2. 建立 .env 檔案（在 backend 目錄）
-cd backend
-echo 'DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/malscan' > .env
+docker compose up -d postgres minio rabbitmq clamav
 ```
 
-> 💡 資料庫表格會在後端啟動時自動建立，無需手動執行 migration。
+### 2. 設定環境變數 (`.env`)
 
-### 前端
+後端與 Worker 需要連線至本機建立的基礎設施。請切換目錄建立對應的 `.env` 檔案：
+
+#### Backend (`backend/.env`)
+```bash
+cd backend
+cat <<EOF > .env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/malscan
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+EOF
+```
+
+#### Worker (`worker/.env`)
+```bash
+cd ../worker
+cat <<EOF > .env
+DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/malscan
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+CLAMAV_HOST=localhost
+CLAMAV_PORT=3310
+SANDBOX_MOCK=true
+EOF
+```
+
+> 💡 資料庫表格會在後端和 Worker 啟動時自動建立，無需手動執行 migration。
+
+### 3. 啟動前端
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 後端
+### 4. 啟動後端
 ```bash
 cd backend
 poetry install
 poetry run uvicorn malscan.main:app --reload
 ```
 
-### Worker
+### 5. 啟動 Worker
 ```bash
 cd worker
 poetry install
 poetry run python -m malscan_worker.main
 ```
 
-### Docker Compose（本機環境）
+### 📦 測試完整容器化環境（Docker Compose）
+
+若你完成開發，想在本機以 **完整容器化** 的方式測試整個系統：
+
+1. **請先確保關閉**所有本機正在運行的 `poetry run`（API 和 Worker），以避免潛在的連線或消費者衝突。
+2. 執行以下指令，強制重新編譯修改過的 Worker 與 API image，確保容器使用的是最新的程式碼：
+
 ```bash
-docker-compose up -d
+# 在專案根目錄下
+docker compose up -d --build
 ```
 
 ---

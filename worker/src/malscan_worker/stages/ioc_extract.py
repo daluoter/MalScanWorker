@@ -134,9 +134,7 @@ class IocExtractStage(Stage):
                     url_size = len(url_content)
 
                     # Sanitize URL for filename (very basic)
-                    safe_name = (
-                        "url_" + hashlib.md5(url.encode()).hexdigest()[:8] + ".url"
-                    )
+                    safe_name = "url_" + hashlib.md5(url.encode()).hexdigest()[:8] + ".url"
 
                     # Write temporarily to pass to submitter
                     fd, temp_path = tempfile.mkstemp(suffix=".url")
