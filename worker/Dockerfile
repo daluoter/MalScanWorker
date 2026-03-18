@@ -6,7 +6,7 @@ WORKDIR /app
 # ClamAV and YARA are now handled differently
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
-    unrar \
+    unar \
     && rm -rf /var/lib/apt/lists/*
 
 # Install poetry
