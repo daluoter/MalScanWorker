@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies: libmagic, unrar (for RAR archive extraction)
+# Install system dependencies: libmagic, unar (for RAR archive extraction)
 # ClamAV and YARA are now handled differently
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 \
@@ -12,18 +12,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install poetry
 RUN pip install poetry
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock* ./
+# Copy backend package first (worker has a path dependency on malscan-api)
+COPY backend/ /backend
+
+# Copy worker dependency files
+COPY worker/pyproject.toml worker/poetry.lock* ./
 
 # Install dependencies
 RUN poetry config virtualenvs.create false \
     && poetry install --only main --no-root --no-interaction --no-ansi
 
-# Copy source code
-COPY src/ ./src/
+# Copy worker source code
+COPY worker/src/ ./src/
 
 # Copy YARA rules (if any)
-COPY rules/ /etc/yara/rules/
+COPY worker/rules/ /etc/yara/rules/
 
 # Set PYTHONPATH so Python can find the malscan_worker module
 ENV PYTHONPATH=/app/src

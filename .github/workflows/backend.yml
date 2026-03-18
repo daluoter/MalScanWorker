@@ -81,7 +81,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./${{ matrix.component }}
+          context: ${{ matrix.component == 'worker' && '.' || format('./{0}', matrix.component) }}
+          file: ./${{ matrix.component }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
