@@ -50,8 +50,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Filename sanitization + error response helpers (TDD)
-- [ ] 02-02-PLAN.md — Streaming upload handler, MinIO upload, router wiring
+- [x] 02-01-PLAN.md — Filename sanitization + error response helpers (TDD)
+- [x] 02-02-PLAN.md — Streaming upload handler, MinIO upload, router wiring
 
 ### Phase 3: Database, Dedup & Message Queue
 **Goal**: Complete upload pipeline — file and job records created atomically in PostgreSQL, duplicate files handled safely under concurrency, and job messages published to RabbitMQ with retry and failure handling
@@ -63,7 +63,12 @@ Plans:
   3. If `parent_job_id` is provided, the parent job is validated and recursion depth is checked against max (default 3) — HTTP 400 returned for invalid parent or exceeded depth
   4. A persistent JSON message is published to `malscan.jobs` queue with exact fields the Python worker expects (`job_id`, `file_id`, `storage_key`, `sha256`, `original_filename`)
   5. If RabbitMQ publish fails after 5 retries with exponential backoff (1s→2s→4s→8s→16s), the job status is updated to "failed" in DB and the request returns HTTP 503
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Database store package: File/Job CRUD, SHA256 dedup, parent validation (TDD)
+- [ ] 03-02-PLAN.md — RabbitMQ publisher: queue declaration, persistent publish, exponential backoff retry (TDD)
+- [ ] 03-03-PLAN.md — Integration: wire Store + Publisher into upload handler and main.go
 
 ### Phase 4: API Contract & Production Readiness
 **Goal**: API responses are format-compatible with the Python endpoint so the frontend works without changes, CORS allows frontend access, and the service shuts down gracefully without dropping in-flight uploads
@@ -92,8 +97,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Infrastructure Wiring | 0/3 | Not started | - |
-| 2. File Streaming & Storage | 0/2 | Not started | - |
-| 3. Database, Dedup & Message Queue | 0/TBD | Not started | - |
+| 1. Foundation & Infrastructure Wiring | 3/3 | Complete | 2026-03-27 |
+| 2. File Streaming & Storage | 2/2 | Complete | 2026-03-27 |
+| 3. Database, Dedup & Message Queue | 0/3 | Not started | - |
 | 4. API Contract & Production Readiness | 0/TBD | Not started | - |
 | 5. Integration & Deployment | 0/TBD | Not started | - |
