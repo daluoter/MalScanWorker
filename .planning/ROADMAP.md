@@ -33,7 +33,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Go module init, config parsing, structured logging, main.go skeleton
+- [x] 01-01-PLAN.md — Go module init, config parsing, structured logging, main.go skeleton
 - [ ] 01-02-PLAN.md — Backend connections (pgxpool, MinIO, RabbitMQ), health endpoint, tests
 - [ ] 01-03-PLAN.md — Multi-stage Dockerfile, Docker Compose service entry
 

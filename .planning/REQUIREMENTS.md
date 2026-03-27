@@ -29,7 +29,7 @@
 - [ ] **DB-04**: File deduplication uses `INSERT ... ON CONFLICT (sha256) DO NOTHING` + `SELECT` to handle concurrent uploads of identical files safely (race condition prevention)
 - [ ] **DB-05**: If `parent_job_id` is provided, Go service validates the parent job exists and checks recursion depth against max (default 3), returning HTTP 400 if invalid or exceeded
 - [ ] **DB-06**: PostgreSQL connection pool via `pgxpool` configured for 10–50 concurrent uploads (`MaxConns`, `MinConns`, `MaxConnLifetime` tunable via env vars)
-- [ ] **DB-07**: `DATABASE_URL` parsing strips the `+asyncpg` dialect prefix from the shared env var (converting `postgresql+asyncpg://` to `postgresql://` for pgx compatibility)
+- [x] **DB-07**: `DATABASE_URL` parsing strips the `+asyncpg` dialect prefix from the shared env var (converting `postgresql+asyncpg://` to `postgresql://` for pgx compatibility)
 
 ### Message Queue
 
@@ -48,8 +48,8 @@
 ### Operations & Deployment
 
 - [ ] **OPS-01**: `GET /healthz` endpoint returns HTTP 200 when service is alive, for Kubernetes liveness probes
-- [ ] **OPS-02**: JSON structured logging via `log/slog` with fields: `job_id`, `file_id`, `sha256`, `duration_ms`, `error`, `level`, `msg`, `time` — parseable by existing log aggregation
-- [ ] **OPS-03**: All configuration via environment variables: `DATABASE_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`, `RABBITMQ_URL`, `CORS_ORIGINS`, `MAX_FILE_SIZE`, `STAGES_TOTAL`, `LOG_LEVEL`, `PORT`
+- [x] **OPS-02**: JSON structured logging via `log/slog` with fields: `job_id`, `file_id`, `sha256`, `duration_ms`, `error`, `level`, `msg`, `time` — parseable by existing log aggregation
+- [x] **OPS-03**: All configuration via environment variables: `DATABASE_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`, `RABBITMQ_URL`, `CORS_ORIGINS`, `MAX_FILE_SIZE`, `STAGES_TOTAL`, `LOG_LEVEL`, `PORT`
 - [ ] **OPS-04**: Graceful shutdown on SIGTERM/SIGINT — drains in-flight uploads, closes DB pool and RabbitMQ connection, respects configurable shutdown timeout
 - [ ] **OPS-05**: Multi-stage Dockerfile (`golang:alpine` → `alpine`) producing minimal static binary image (~15MB)
 - [ ] **OPS-06**: Docker Compose service entry for `ingest` alongside existing `api`, `worker`, and infrastructure services
@@ -102,7 +102,7 @@
 | DB-04 | Phase 3 | Pending |
 | DB-05 | Phase 3 | Pending |
 | DB-06 | Phase 1 | Pending |
-| DB-07 | Phase 1 | Pending |
+| DB-07 | Phase 1 | Complete |
 | MQ-01 | Phase 3 | Pending |
 | MQ-02 | Phase 3 | Pending |
 | MQ-03 | Phase 3 | Pending |
@@ -112,8 +112,8 @@
 | API-03 | Phase 4 | Pending |
 | API-04 | Phase 4 | Pending |
 | OPS-01 | Phase 1 | Pending |
-| OPS-02 | Phase 1 | Pending |
-| OPS-03 | Phase 1 | Pending |
+| OPS-02 | Phase 1 | Complete |
+| OPS-03 | Phase 1 | Complete |
 | OPS-04 | Phase 4 | Pending |
 | OPS-05 | Phase 1 | Pending |
 | OPS-06 | Phase 1 | Pending |
