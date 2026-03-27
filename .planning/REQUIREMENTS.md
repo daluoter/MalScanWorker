@@ -18,7 +18,7 @@
 ### Storage Integration
 
 - [ ] **STORE-01**: File is uploaded to MinIO using SHA256 hash as the object key in the `uploads` bucket, preserving the content-type metadata
-- [ ] **STORE-02**: On startup, Go service creates the MinIO `uploads` bucket if it doesn't exist and sets a 1-day lifecycle expiration policy
+- [x] **STORE-02**: On startup, Go service creates the MinIO `uploads` bucket if it doesn't exist and sets a 1-day lifecycle expiration policy
 - [ ] **STORE-03**: Before uploading to MinIO, Go service checks PostgreSQL `files` table for existing SHA256 — skips MinIO upload and reuses existing `File` record for duplicates, creates new `Job` against existing file
 
 ### Database Operations
@@ -28,7 +28,7 @@
 - [ ] **DB-03**: File and Job records are inserted in a single PostgreSQL transaction — if Job creation fails, File insert rolls back
 - [ ] **DB-04**: File deduplication uses `INSERT ... ON CONFLICT (sha256) DO NOTHING` + `SELECT` to handle concurrent uploads of identical files safely (race condition prevention)
 - [ ] **DB-05**: If `parent_job_id` is provided, Go service validates the parent job exists and checks recursion depth against max (default 3), returning HTTP 400 if invalid or exceeded
-- [ ] **DB-06**: PostgreSQL connection pool via `pgxpool` configured for 10–50 concurrent uploads (`MaxConns`, `MinConns`, `MaxConnLifetime` tunable via env vars)
+- [x] **DB-06**: PostgreSQL connection pool via `pgxpool` configured for 10–50 concurrent uploads (`MaxConns`, `MinConns`, `MaxConnLifetime` tunable via env vars)
 - [x] **DB-07**: `DATABASE_URL` parsing strips the `+asyncpg` dialect prefix from the shared env var (converting `postgresql+asyncpg://` to `postgresql://` for pgx compatibility)
 
 ### Message Queue
@@ -47,7 +47,7 @@
 
 ### Operations & Deployment
 
-- [ ] **OPS-01**: `GET /healthz` endpoint returns HTTP 200 when service is alive, for Kubernetes liveness probes
+- [x] **OPS-01**: `GET /healthz` endpoint returns HTTP 200 when service is alive, for Kubernetes liveness probes
 - [x] **OPS-02**: JSON structured logging via `log/slog` with fields: `job_id`, `file_id`, `sha256`, `duration_ms`, `error`, `level`, `msg`, `time` — parseable by existing log aggregation
 - [x] **OPS-03**: All configuration via environment variables: `DATABASE_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`, `RABBITMQ_URL`, `CORS_ORIGINS`, `MAX_FILE_SIZE`, `STAGES_TOTAL`, `LOG_LEVEL`, `PORT`
 - [ ] **OPS-04**: Graceful shutdown on SIGTERM/SIGINT — drains in-flight uploads, closes DB pool and RabbitMQ connection, respects configurable shutdown timeout
@@ -94,14 +94,14 @@
 | UPLOAD-05 | Phase 2 | Pending |
 | UPLOAD-06 | Phase 2 | Pending |
 | STORE-01 | Phase 2 | Pending |
-| STORE-02 | Phase 1 | Pending |
+| STORE-02 | Phase 1 | Complete |
 | STORE-03 | Phase 3 | Pending |
 | DB-01 | Phase 3 | Pending |
 | DB-02 | Phase 3 | Pending |
 | DB-03 | Phase 3 | Pending |
 | DB-04 | Phase 3 | Pending |
 | DB-05 | Phase 3 | Pending |
-| DB-06 | Phase 1 | Pending |
+| DB-06 | Phase 1 | Complete |
 | DB-07 | Phase 1 | Complete |
 | MQ-01 | Phase 3 | Pending |
 | MQ-02 | Phase 3 | Pending |
@@ -111,7 +111,7 @@
 | API-02 | Phase 4 | Pending |
 | API-03 | Phase 4 | Pending |
 | API-04 | Phase 4 | Pending |
-| OPS-01 | Phase 1 | Pending |
+| OPS-01 | Phase 1 | Complete |
 | OPS-02 | Phase 1 | Complete |
 | OPS-03 | Phase 1 | Complete |
 | OPS-04 | Phase 4 | Pending |
