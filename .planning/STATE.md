@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 01-03-PLAN.md — Dockerfile and Docker Compose ingest service entry
-last_updated: "2026-03-27T09:04:55.880Z"
+status: executing
+stopped_at: Completed Phase 3 — all plans executed, reviewed, and verified
+last_updated: "2026-03-27T21:00:00.000Z"
 last_activity: 2026-03-27
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 0
+  completed_phases: 3
+  total_plans: 8
+  completed_plans: 8
+  percent: 60
 ---
 
 # Project State
@@ -21,40 +21,45 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Fast, reliable file ingestion that never drops uploads under concurrent load — the gateway through which every malware sample enters the analysis pipeline.
-**Current focus:** Phase 01 — foundation-infrastructure-wiring
+**Current focus:** Phase 03 complete — ready for Phase 04
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
-Status: Phase complete — ready for verification
+Phase: 3 (complete)
+Plan: All plans complete (03-01, 03-02, 03-03)
+Status: Phase 3 executed, reviewed, and verified — ready for Phase 4
 Last activity: 2026-03-27
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: —
-- Total execution time: 0 hours
+- Total plans completed: 8
+- Average duration: ~4m
+- Total execution time: ~39m
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| Phase 01 | 3 | ~11m | ~3m43s |
+| Phase 02 | 2 | ~10m | ~5m |
+| Phase 03 | 3 | ~18m | ~6m |
 
 **Recent Trend:**
 
-- Last 5 plans: —
-- Trend: —
-
-*Updated after each plan completion*
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
 | Phase 01 P01 | 5m27s | 2 tasks | 6 files |
 | Phase 01 P02 | 4m28s | 2 tasks | 6 files |
 | Phase 01 P03 | 1m14s | 2 tasks | 2 files |
+| Phase 02 P01 | ~4m | 2 tasks | 4 files |
+| Phase 02 P02 | ~6m | 2 tasks | 4 files |
+| Phase 03 P01 | ~5m | 1 task | 2 files |
+| Phase 03 P02 | ~5m | 1 task | 2 files |
+| Phase 03 P03 | ~8m | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -75,10 +80,22 @@ Recent decisions affecting current work:
 - [Phase 01]: Idempotent lifecycle set: ensureBucket always calls SetBucketLifecycle to match Python behavior
 - [Phase 01]: Inline environment block over env_file: matches existing api/worker docker-compose pattern
 - [Phase 01]: alpine:3.19 runtime with ca-certificates for minimal ~15-20MB image with TLS support
+- [Phase 02]: `path.Base()` not `filepath.Base()` for OS-independent filename extraction
+- [Phase 02]: `path.Base("")` returns `"."`, `path.Base("/")` returns `"/"` — guard added for Python parity
+- [Phase 02]: `ObjectUploader` interface for testability — `*minio.Client` satisfies natively
+- [Phase 02]: `NewHandler` takes `*slog.Logger` for structured logging consistency
+- [Phase 02]: 150MB MaxBytesReader at HTTP level, 100MB per-file limit inside handler (two-layer defense)
+- [Phase 03]: `INSERT ON CONFLICT (sha256) DO NOTHING` + fallback `SELECT` for concurrent-safe dedup
+- [Phase 03]: Sentinel errors `store.ErrNotFound` and `store.ErrDepthExceeded` for handler HTTP status decisions
+- [Phase 03]: `retryBaseDelay` field in Publisher for fast tests (1ms instead of 1s)
+- [Phase 03]: HTTP 201 (Created) for successful uploads — semantically correct, accepted over plan's 200
+- [Phase 03]: `parent_job_id` must precede `file` in multipart form data (loop breaks on file part)
+- [Phase 03]: `MaxDepth` configurable via `MAX_DEPTH` env var (default 3)
 
 ### Pending Todos
 
-None yet.
+- I-2: Handle `parent_job_id` sent after file part (or document requirement) — accepted limitation
+- I-3: Add test for valid parent_job_id happy-path (parent validation + depth increment)
 
 ### Blockers/Concerns
 
@@ -87,6 +104,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-27T09:00:40.237Z
-Stopped at: Completed 01-03-PLAN.md — Dockerfile and Docker Compose ingest service entry
+Last session: 2026-03-27
+Stopped at: Phase 3 complete — all 3 plans executed, reviewed, fixes applied
 Resume file: None

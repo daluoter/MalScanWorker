@@ -19,7 +19,10 @@ import (
 
 	"github.com/daluoter/malscan-ingest/internal/config"
 	"github.com/daluoter/malscan-ingest/internal/health"
+	"github.com/daluoter/malscan-ingest/internal/queue"
 	"github.com/daluoter/malscan-ingest/internal/server"
+	"github.com/daluoter/malscan-ingest/internal/store"
+	"github.com/daluoter/malscan-ingest/internal/upload"
 )
 
 func main() {
@@ -59,9 +62,25 @@ func run() error {
 	}
 	defer amqpConn.Close()
 
-	// Setup router with health endpoint
+	// Open a long-lived channel for the publisher
+	amqpCh, err := amqpConn.Channel()
+	if err != nil {
+		return fmt.Errorf("open rabbitmq channel: %w", err)
+	}
+	defer amqpCh.Close()
+
+	pub := queue.NewPublisher(amqpCh, cfg.RabbitmqQueue, slog.Default())
+	if err := pub.DeclareQueue(ctx); err != nil {
+		return fmt.Errorf("declare queue: %w", err)
+	}
+
+	// Create database store
+	dbStore := store.NewStore(pool, cfg.StagesTotal, cfg.MaxDepth, slog.Default())
+
+	// Setup router with health and upload endpoints
 	checker := health.NewChecker(pool, minioClient, amqpConn, cfg.MinioBucket)
-	r := server.NewRouter(checker)
+	uploadHandler := upload.NewHandler(minioClient, dbStore, pub, cfg.MinioBucket, cfg.MaxFileSize, slog.Default())
+	r := server.NewRouter(checker, uploadHandler)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

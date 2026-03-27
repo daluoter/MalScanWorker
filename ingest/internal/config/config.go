@@ -11,17 +11,18 @@ import (
 // Field names and defaults match backend/src/malscan/config.py exactly.
 type Config struct {
 	// Required — no defaults (security-sensitive)
-	DatabaseURL   string `env:"DATABASE_URL,required"`
-	MinioEndpoint string `env:"MINIO_ENDPOINT,required"`
+	DatabaseURL    string `env:"DATABASE_URL,required"`
+	MinioEndpoint  string `env:"MINIO_ENDPOINT,required"`
 	MinioAccessKey string `env:"MINIO_ACCESS_KEY,required"`
 	MinioSecretKey string `env:"MINIO_SECRET_KEY,required"`
-	RabbitmqURL   string `env:"RABBITMQ_URL,required"`
+	RabbitmqURL    string `env:"RABBITMQ_URL,required"`
 
 	// Optional with defaults matching Python config.py
 	MinioSecure   bool   `env:"MINIO_SECURE"          envDefault:"false"`
 	MinioBucket   string `env:"MINIO_BUCKET_UPLOADS"   envDefault:"uploads"`
 	RabbitmqQueue string `env:"RABBITMQ_QUEUE"         envDefault:"malscan.jobs"`
 	MaxFileSize   int64  `env:"MAX_FILE_SIZE"           envDefault:"104857600"` // 100MB
+	MaxDepth      int    `env:"MAX_DEPTH"               envDefault:"3"`         // max recursion depth for child jobs
 	CORSOrigins   string `env:"CORS_ORIGINS"            envDefault:"*"`
 	LogLevel      string `env:"LOG_LEVEL"               envDefault:"INFO"`
 	Port          int    `env:"PORT"                    envDefault:"8080"`

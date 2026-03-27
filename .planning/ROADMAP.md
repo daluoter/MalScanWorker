@@ -66,9 +66,9 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Database store package: File/Job CRUD, SHA256 dedup, parent validation (TDD)
-- [ ] 03-02-PLAN.md — RabbitMQ publisher: queue declaration, persistent publish, exponential backoff retry (TDD)
-- [ ] 03-03-PLAN.md — Integration: wire Store + Publisher into upload handler and main.go
+- [x] 03-01-PLAN.md — Database store package: File/Job CRUD, SHA256 dedup, parent validation (TDD)
+- [x] 03-02-PLAN.md — RabbitMQ publisher: queue declaration, persistent publish, exponential backoff retry (TDD)
+- [x] 03-03-PLAN.md — Integration: wire Store + Publisher into upload handler and main.go
 
 ### Phase 4: API Contract & Production Readiness
 **Goal**: API responses are format-compatible with the Python endpoint so the frontend works without changes, CORS allows frontend access, and the service shuts down gracefully without dropping in-flight uploads
@@ -99,6 +99,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Foundation & Infrastructure Wiring | 3/3 | Complete | 2026-03-27 |
 | 2. File Streaming & Storage | 2/2 | Complete | 2026-03-27 |
-| 3. Database, Dedup & Message Queue | 0/3 | Not started | - |
+| 3. Database, Dedup & Message Queue | 3/3 | Complete | 2026-03-27 |
 | 4. API Contract & Production Readiness | 0/TBD | Not started | - |
 | 5. Integration & Deployment | 0/TBD | Not started | - |
