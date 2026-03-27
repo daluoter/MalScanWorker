@@ -85,11 +85,40 @@
 
 ## Traceability
 
-<!-- Populated by roadmap — maps REQ-IDs to phases -->
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| | | |
+| UPLOAD-01 | Phase 2 | Pending |
+| UPLOAD-02 | Phase 2 | Pending |
+| UPLOAD-03 | Phase 2 | Pending |
+| UPLOAD-04 | Phase 2 | Pending |
+| UPLOAD-05 | Phase 2 | Pending |
+| UPLOAD-06 | Phase 2 | Pending |
+| STORE-01 | Phase 2 | Pending |
+| STORE-02 | Phase 1 | Pending |
+| STORE-03 | Phase 3 | Pending |
+| DB-01 | Phase 3 | Pending |
+| DB-02 | Phase 3 | Pending |
+| DB-03 | Phase 3 | Pending |
+| DB-04 | Phase 3 | Pending |
+| DB-05 | Phase 3 | Pending |
+| DB-06 | Phase 1 | Pending |
+| DB-07 | Phase 1 | Pending |
+| MQ-01 | Phase 3 | Pending |
+| MQ-02 | Phase 3 | Pending |
+| MQ-03 | Phase 3 | Pending |
+| MQ-04 | Phase 3 | Pending |
+| API-01 | Phase 4 | Pending |
+| API-02 | Phase 4 | Pending |
+| API-03 | Phase 4 | Pending |
+| API-04 | Phase 4 | Pending |
+| OPS-01 | Phase 1 | Pending |
+| OPS-02 | Phase 1 | Pending |
+| OPS-03 | Phase 1 | Pending |
+| OPS-04 | Phase 4 | Pending |
+| OPS-05 | Phase 1 | Pending |
+| OPS-06 | Phase 1 | Pending |
+| DEPLOY-01 | Phase 5 | Pending |
+| DEPLOY-02 | Phase 5 | Pending |
 
 ---
 *Generated: 2026-03-27*
