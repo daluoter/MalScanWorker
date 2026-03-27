@@ -38,14 +38,14 @@ Fast, reliable file ingestion that never drops uploads under concurrent load —
 
 - [ ] Go microservice implementing `POST /api/v1/files` with identical API contract (request/response schema)
 - [ ] Native Go concurrency (goroutines) for 10–50 simultaneous uploads
-- [ ] Direct PostgreSQL writes using the exact existing `files` and `jobs` table schema
-- [ ] Direct RabbitMQ AMQP publishing (no Python intermediary)
-- [ ] Direct MinIO S3 upload via Go SDK
-- [ ] Streaming multipart processing without full file buffering in memory
-- [ ] Configuration via environment variables (same vars as current backend: `DATABASE_URL`, `MINIO_*`, `RABBITMQ_URL`, etc.)
-- [ ] Health check endpoint (`GET /healthz`) for Kubernetes liveness/readiness probes
-- [ ] Dockerfile for containerized deployment (multi-stage build, minimal image)
-- [ ] Docker Compose service entry alongside existing backend/worker/infra services
+- [x] Direct PostgreSQL writes using the exact existing `files` and `jobs` table schema — Validated in Phase 3
+- [x] Direct RabbitMQ AMQP publishing (no Python intermediary) — Validated in Phase 3
+- [x] Direct MinIO S3 upload via Go SDK — Validated in Phase 2
+- [x] Streaming multipart processing without full file buffering in memory — Validated in Phase 2
+- [x] Configuration via environment variables (same vars as current backend: `DATABASE_URL`, `MINIO_*`, `RABBITMQ_URL`, etc.) — Validated in Phase 1
+- [x] Health check endpoint (`GET /healthz`) for Kubernetes liveness/readiness probes — Validated in Phase 1
+- [x] Dockerfile for containerized deployment (multi-stage build, minimal image) — Validated in Phase 1
+- [x] Docker Compose service entry alongside existing backend/worker/infra services — Validated in Phase 1
 - [ ] Kubernetes manifests (Deployment, Service) in `k8s/` directory
 - [ ] Nginx/proxy routing so frontend hits Go service for uploads, FastAPI for everything else
 - [ ] Graceful shutdown with in-flight upload draining
@@ -120,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-27 after initialization*
+*Last updated: 2026-03-27 after Phase 3 completion*
