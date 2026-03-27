@@ -11,8 +11,8 @@ See: .planning/PROJECT.md (updated 2026-03-27)
 
 Phase: 1 of 5 (Foundation & Infrastructure Wiring)
 Plan: 0 of TBD in current phase
-Status: Ready to plan
-Last activity: 2026-03-27 — Roadmap created with 5 phases covering 32 requirements
+Status: Context complete — ready to plan
+Last activity: 2026-03-27 — Phase 1 context discussed and committed
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -42,6 +42,9 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
+- [Phase 1 Context]: Go code in `ingest/` with `cmd/internal` layout, port 8080, fail-fast startup, single `/health` endpoint
+- [Phase 1 Context]: Shared `.env` — Go strips `+asyncpg` from DATABASE_URL at parse time
+- [Phase 1 Context]: Docker Compose service name `ingest`, image `ghcr.io/daluoter/malscan-ingest:latest`
 - [Roadmap]: 5-phase structure following data flow — foundation → streaming → persistence → contract → deployment
 - [Roadmap]: Split research's monolithic Phase 2 into Phases 2+3 (streaming vs persistence) for better verifiability
 - [Research]: DATABASE_URL `+asyncpg` prefix must be stripped at config load (pitfall #1)
@@ -59,5 +62,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-03-27
-Stopped at: Roadmap created, ready to plan Phase 1
-Resume file: None
+Stopped at: Phase 1 context complete, ready for planning
+Resume file: .planning/phases/01-foundation-infrastructure-wiring/01-CONTEXT.md
