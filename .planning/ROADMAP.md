@@ -47,7 +47,11 @@ Plans:
   3. Request bodies exceeding 150MB are aborted at the HTTP layer before multipart parsing begins
   4. Filenames containing path separators, null bytes, or exceeding 255 characters are sanitized; empty filenames default to "unnamed"
   5. The uploaded file exists in MinIO keyed by SHA256 hash with correct content-type metadata; temp files are cleaned up on all code paths (success, error, panic)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Filename sanitization + error response helpers (TDD)
+- [ ] 02-02-PLAN.md — Streaming upload handler, MinIO upload, router wiring
 
 ### Phase 3: Database, Dedup & Message Queue
 **Goal**: Complete upload pipeline — file and job records created atomically in PostgreSQL, duplicate files handled safely under concurrency, and job messages published to RabbitMQ with retry and failure handling
@@ -89,7 +93,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Infrastructure Wiring | 0/3 | Not started | - |
-| 2. File Streaming & Storage | 0/TBD | Not started | - |
+| 2. File Streaming & Storage | 0/2 | Not started | - |
 | 3. Database, Dedup & Message Queue | 0/TBD | Not started | - |
 | 4. API Contract & Production Readiness | 0/TBD | Not started | - |
 | 5. Integration & Deployment | 0/TBD | Not started | - |
