@@ -30,7 +30,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Service logs are JSON-formatted with `level`, `msg`, `time` fields visible in `docker compose logs ingest`
   4. Service reads all configuration from environment variables (`DATABASE_URL`, `MINIO_*`, `RABBITMQ_URL`, `CORS_ORIGINS`, `MAX_FILE_SIZE`, `PORT`, etc.) and successfully connects to PostgreSQL (pooled via pgxpool), MinIO, and RabbitMQ on startup — no hardcoded values
   5. MinIO `uploads` bucket exists after service startup (auto-created with 1-day lifecycle expiration policy if missing)
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Go module init, config parsing, structured logging, main.go skeleton
+- [ ] 01-02-PLAN.md — Backend connections (pgxpool, MinIO, RabbitMQ), health endpoint, tests
+- [ ] 01-03-PLAN.md — Multi-stage Dockerfile, Docker Compose service entry
 
 ### Phase 2: File Streaming & Storage
 **Goal**: Files can be streamed into the service, incrementally hashed, validated for size and filename, and stored in MinIO — all without buffering entire files in memory
@@ -83,7 +88,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Infrastructure Wiring | 0/TBD | Not started | - |
+| 1. Foundation & Infrastructure Wiring | 0/3 | Not started | - |
 | 2. File Streaming & Storage | 0/TBD | Not started | - |
 | 3. Database, Dedup & Message Queue | 0/TBD | Not started | - |
 | 4. API Contract & Production Readiness | 0/TBD | Not started | - |
