@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
 
@@ -80,13 +81,16 @@ func TestDatabaseURLNoTransform(t *testing.T) {
 }
 
 func TestConfigRequiredMissing(t *testing.T) {
-	// Do NOT set any env vars — DATABASE_URL should be required.
-	// Clear any env vars that might be set from the test runner environment.
-	t.Setenv("DATABASE_URL", "")
-	t.Setenv("MINIO_ENDPOINT", "")
-	t.Setenv("MINIO_ACCESS_KEY", "")
-	t.Setenv("MINIO_SECRET_KEY", "")
-	t.Setenv("RABBITMQ_URL", "")
+	// Ensure required env vars are not set by registering them for cleanup
+	// and then unsetting them. t.Setenv registers restore-on-cleanup;
+	// os.Unsetenv actually removes the var for this test.
+	for _, key := range []string{
+		"DATABASE_URL", "MINIO_ENDPOINT", "MINIO_ACCESS_KEY",
+		"MINIO_SECRET_KEY", "RABBITMQ_URL",
+	} {
+		t.Setenv(key, "")  // register for cleanup
+		os.Unsetenv(key)   // actually unset
+	}
 
 	_, err := Load()
 	if err == nil {
