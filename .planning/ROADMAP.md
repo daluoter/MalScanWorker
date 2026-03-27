@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 - [x] 01-01-PLAN.md — Go module init, config parsing, structured logging, main.go skeleton
 - [x] 01-02-PLAN.md — Backend connections (pgxpool, MinIO, RabbitMQ), health endpoint, tests
-- [ ] 01-03-PLAN.md — Multi-stage Dockerfile, Docker Compose service entry
+- [x] 01-03-PLAN.md — Multi-stage Dockerfile, Docker Compose service entry
 
 ### Phase 2: File Streaming & Storage
 **Goal**: Files can be streamed into the service, incrementally hashed, validated for size and filename, and stored in MinIO — all without buffering entire files in memory

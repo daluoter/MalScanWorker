@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-02-PLAN.md — backend connections, health endpoint, router wiring
-last_updated: "2026-03-27T08:56:57.249Z"
+status: verifying
+stopped_at: Completed 01-03-PLAN.md — Dockerfile and Docker Compose ingest service entry
+last_updated: "2026-03-27T09:00:40.240Z"
 last_activity: 2026-03-27
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-27)
 
 Phase: 01 (foundation-infrastructure-wiring) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-27
 
 Progress: [░░░░░░░░░░] 0%
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 01 P01 | 5m27s | 2 tasks | 6 files |
 | Phase 01 P02 | 4m28s | 2 tasks | 6 files |
+| Phase 01 P03 | 1m14s | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -72,6 +73,8 @@ Recent decisions affecting current work:
 - [Phase 01]: go.mod version 1.25.0: pgx/v5@v5.9.1 requires go>=1.25.0, auto-upgraded from planned 1.22 via Go toolchain download
 - [Phase 01]: Interface-based health checker: PostgresPinger, MinioBucketChecker, RabbitMQChecker interfaces for testability
 - [Phase 01]: Idempotent lifecycle set: ensureBucket always calls SetBucketLifecycle to match Python behavior
+- [Phase 01]: Inline environment block over env_file: matches existing api/worker docker-compose pattern
+- [Phase 01]: alpine:3.19 runtime with ca-certificates for minimal ~15-20MB image with TLS support
 
 ### Pending Todos
 
@@ -84,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-27T08:56:57.246Z
-Stopped at: Completed 01-02-PLAN.md — backend connections, health endpoint, router wiring
+Last session: 2026-03-27T09:00:40.237Z
+Stopped at: Completed 01-03-PLAN.md — Dockerfile and Docker Compose ingest service entry
 Resume file: None
