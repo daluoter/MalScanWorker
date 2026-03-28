@@ -93,7 +93,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Nginx reverse proxy routes `POST /api/v1/files` to the Go ingest service and all other API paths to the FastAPI backend — the frontend uploads files through the Go service without any code or configuration changes
   2. Kubernetes manifests in `k8s/ingest/` define a Deployment and Service with liveness probe on `/healthz`, resource requests/limits, and security context (runAsNonRoot, readOnlyRootFilesystem)
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Nginx reverse proxy config + Docker Compose integration
+- [ ] 05-02-PLAN.md — Kubernetes Deployment + ClusterIP Service for ingest
 
 ## Progress
 
@@ -106,4 +110,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. File Streaming & Storage | 2/2 | Complete | 2026-03-27 |
 | 3. Database, Dedup & Message Queue | 3/3 | Complete | 2026-03-27 |
 | 4. API Contract & Production Readiness | 3/3 | Complete | 2026-03-28 |
-| 5. Integration & Deployment | 0/TBD | Not started | - |
+| 5. Integration & Deployment | 0/2 | Planned | - |
