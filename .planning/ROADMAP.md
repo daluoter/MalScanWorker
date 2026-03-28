@@ -83,7 +83,7 @@ Plans:
 
 Plans:
 - [ ] 04-01-PLAN.md — Typed UploadResponse struct, error code audit & MaxBytesError handling
-- [ ] 04-02-PLAN.md — CORS middleware (go-chi/cors) matching Python FastAPI config
+- [x] 04-02-PLAN.md — CORS middleware (go-chi/cors) matching Python FastAPI config
 - [ ] 04-03-PLAN.md — Configurable graceful shutdown timeout
 
 ### Phase 5: Integration & Deployment
@@ -105,5 +105,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 1. Foundation & Infrastructure Wiring | 3/3 | Complete | 2026-03-27 |
 | 2. File Streaming & Storage | 2/2 | Complete | 2026-03-27 |
 | 3. Database, Dedup & Message Queue | 3/3 | Complete | 2026-03-27 |
-| 4. API Contract & Production Readiness | 0/TBD | Not started | - |
+| 4. API Contract & Production Readiness | 1/3 | In progress | - |
 | 5. Integration & Deployment | 0/TBD | Not started | - |

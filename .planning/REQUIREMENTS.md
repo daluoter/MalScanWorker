@@ -43,7 +43,7 @@
 - [ ] **API-01**: Success response is HTTP 201 with JSON body `{"job_id": "uuid", "file_id": "uuid", "sha256": "hex", "status": "queued", "created_at": "ISO8601"}` — matching `UploadResponse` schema in `backend/src/malscan/schemas/requests.py`
 - [ ] **API-02**: Error responses use envelope format `{"error": {"code": "ERROR_CODE", "message": "...", "details": {...}}}` — matching `ApiErrorResponse` schema
 - [ ] **API-03**: HTTP status codes match existing endpoint: 201 (success), 400 (validation/size/depth), 422 (missing file field), 500 (storage/DB error), 503 (queue unavailable)
-- [ ] **API-04**: CORS middleware supports configurable allowed origins via `CORS_ORIGINS` env var, matching current FastAPI CORS configuration
+- [x] **API-04**: CORS middleware supports configurable allowed origins via `CORS_ORIGINS` env var, matching current FastAPI CORS configuration
 
 ### Operations & Deployment
 
@@ -110,7 +110,7 @@
 | API-01 | Phase 4 | Pending |
 | API-02 | Phase 4 | Pending |
 | API-03 | Phase 4 | Pending |
-| API-04 | Phase 4 | Pending |
+| API-04 | Phase 4 | Complete |
 | OPS-01 | Phase 1 | Complete |
 | OPS-02 | Phase 1 | Complete |
 | OPS-03 | Phase 1 | Complete |

@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-27T15:59:18.563Z"
-last_activity: 2026-03-27
+status: executing
+stopped_at: "Completed 04-01-PLAN.md and 04-02-PLAN.md"
+last_updated: "2026-03-28T06:25:42Z"
+last_activity: 2026-03-28
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 60
+  total_plans: 11
+  completed_plans: 10
+  percent: 70
 ---
 
 # Project State
@@ -21,24 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Fast, reliable file ingestion that never drops uploads under concurrent load — the gateway through which every malware sample enters the analysis pipeline.
-**Current focus:** Phase 03 complete — ready for Phase 04
+**Current focus:** Phase 04 in progress — CORS middleware complete
 
 ## Current Position
 
 Phase: 4
-Plan: Not started
-Status: Phase 3 executed, reviewed, and verified — ready for Phase 4
-Last activity: 2026-03-27
+Plan: 02 complete (01 and 02 done in parallel)
+Status: Phase 4 plans 01 (API contract) and 02 (CORS) complete
+Last activity: 2026-03-28
 
-Progress: [██████░░░░] 60%
+Progress: [███████░░░] 70%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8
+- Total plans completed: 10
 - Average duration: ~4m
-- Total execution time: ~39m
+- Total execution time: ~46m
 
 **By Phase:**
 
@@ -60,6 +60,8 @@ Progress: [██████░░░░] 60%
 | Phase 03 P01 | ~5m | 1 task | 2 files |
 | Phase 03 P02 | ~5m | 1 task | 2 files |
 | Phase 03 P03 | ~8m | 2 tasks | 4 files |
+| Phase 04 P02 | ~3m | 1 task | 5 files |
+| Phase 04 P01 | ~4m | 1 task (TDD) | 4 files |
 
 ## Accumulated Context
 
@@ -91,6 +93,9 @@ Recent decisions affecting current work:
 - [Phase 03]: HTTP 201 (Created) for successful uploads — semantically correct, accepted over plan's 200
 - [Phase 03]: `parent_job_id` must precede `file` in multipart form data (loop breaks on file part)
 - [Phase 03]: `MaxDepth` configurable via `MAX_DEPTH` env var (default 3)
+- [Phase 04]: CORS middleware before Recoverer for panic-safe CORS headers
+- [Phase 04]: Route always registered (nil-safe handler) for CORS preflight to work on all paths
+- [Phase 04]: go-chi/cors echoes requested method individually, not all configured methods
 
 ### Pending Todos
 
@@ -104,6 +109,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-27T15:59:18.548Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-api-contract-production-readiness/04-CONTEXT.md
+Last session: 2026-03-28T06:24:44Z
+Stopped at: Completed 04-02-PLAN.md
+Resume file: .planning/phases/04-api-contract-production-readiness/04-02-SUMMARY.md
