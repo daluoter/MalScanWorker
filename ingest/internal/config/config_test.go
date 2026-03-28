@@ -179,3 +179,93 @@ func searchStr(s, substr string) bool {
 	}
 	return false
 }
+
+// TestLoadFromDotEnvFile verifies that Load() reads variables from a .env file
+// when OS env vars are not set. This tests the godotenv integration.
+func TestLoadFromDotEnvFile(t *testing.T) {
+	// Clear all required env vars so Load() must read them from .env
+	for _, key := range []string{
+		"DATABASE_URL", "MINIO_ENDPOINT", "MINIO_ACCESS_KEY",
+		"MINIO_SECRET_KEY", "RABBITMQ_URL",
+	} {
+		t.Setenv(key, "") // register for cleanup
+		os.Unsetenv(key)  // actually unset
+	}
+
+	// Create a temp directory with a .env file containing all required vars
+	tmpDir := t.TempDir()
+	envContent := `DATABASE_URL=postgresql://test:test@localhost:5432/testdb
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=testaccess
+MINIO_SECRET_KEY=testsecret
+RABBITMQ_URL=amqp://test:test@localhost:5672/
+`
+	if err := os.WriteFile(tmpDir+"/.env", []byte(envContent), 0644); err != nil {
+		t.Fatalf("failed to write .env: %v", err)
+	}
+
+	// Change to temp directory so godotenv.Load() finds the .env file
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir to %s: %v", tmpDir, err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.RabbitmqURL != "amqp://test:test@localhost:5672/" {
+		t.Errorf("RabbitmqURL = %q, want %q", cfg.RabbitmqURL, "amqp://test:test@localhost:5672/")
+	}
+	if cfg.DatabaseURL != "postgresql://test:test@localhost:5432/testdb" {
+		t.Errorf("DatabaseURL = %q, want %q", cfg.DatabaseURL, "postgresql://test:test@localhost:5432/testdb")
+	}
+}
+
+// TestOsEnvOverridesDotEnv verifies that OS env vars take precedence over
+// .env file values (godotenv's documented behavior: it does NOT override existing vars).
+func TestOsEnvOverridesDotEnv(t *testing.T) {
+	// Set required env vars via OS — these should win over .env values
+	setRequiredEnv(t)
+	osRabbitmqURL := "amqp://os-override:os-override@localhost:5672/"
+	t.Setenv("RABBITMQ_URL", osRabbitmqURL)
+
+	// Create a temp directory with a .env file containing different values
+	tmpDir := t.TempDir()
+	envContent := `DATABASE_URL=postgresql://dotenv:dotenv@localhost:5432/dotenvdb
+MINIO_ENDPOINT=dotenv:9000
+MINIO_ACCESS_KEY=dotenvaccess
+MINIO_SECRET_KEY=dotenvsecret
+RABBITMQ_URL=amqp://dotenv:dotenv@localhost:5672/
+`
+	if err := os.WriteFile(tmpDir+"/.env", []byte(envContent), 0644); err != nil {
+		t.Fatalf("failed to write .env: %v", err)
+	}
+
+	// Change to temp directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	t.Cleanup(func() { os.Chdir(origDir) })
+
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir to %s: %v", tmpDir, err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	// OS env var should win over .env value
+	if cfg.RabbitmqURL != osRabbitmqURL {
+		t.Errorf("RabbitmqURL = %q, want OS value %q (OS should override .env)", cfg.RabbitmqURL, osRabbitmqURL)
+	}
+}
