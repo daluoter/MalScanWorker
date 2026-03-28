@@ -1,5 +1,39 @@
 # MalScanWorker — Go Ingestion Layer
 
+## Current State
+
+**Shipped Version:** v1.0 (2026-03-28)
+**Status:** Go ingestion microservice fully implemented and deployed
+
+The v1.0 milestone delivered a complete Go microservice (`ingest/`) that replaces the Python/FastAPI file upload endpoint. All 32 requirements satisfied across 5 phases, 13 plans, ~51 minutes execution time. The service runs in production alongside FastAPI with Nginx proxy routing.
+
+**What's working:**
+- Streaming multipart upload with incremental SHA256 hashing
+- MinIO object storage with SHA256-keyed deduplication
+- Atomic PostgreSQL File+Job record creation
+- RabbitMQ persistent publish with exponential backoff retry
+- API contract parity with Python endpoint (zero frontend changes)
+- Nginx reverse proxy routing uploads to Go, everything else to FastAPI
+- Kubernetes Deployment + ClusterIP Service with security context
+- Graceful shutdown, CORS, structured logging, health checks
+
+**Known tech debt:**
+- `parent_job_id` must precede `file` in multipart form data
+- Missing happy-path test for parent job validation
+- Phases 2 and 5 lack formal VERIFICATION.md
+
+## Next Milestone Goals
+
+*No active milestone. Potential v2.0 focus areas:*
+- Prometheus metrics endpoint for upload throughput/latency/error monitoring
+- Readiness probe with backend connectivity checks
+- Streaming MinIO upload via `io.Pipe` (eliminate temp file disk I/O)
+- RabbitMQ auto-reconnection
+- Per-upload timeout enforcement
+- Request-scoped logging with `X-Request-Id` propagation
+
+See [v2 deferred requirements](milestones/v1.0-REQUIREMENTS.md#v2-requirements-deferred-to-next-milestone) for full list.
+
 ## What This Is
 
 A high-performance Go microservice that replaces the Python/FastAPI file upload endpoint in the MalScanWorker malware analysis pipeline. The service handles multipart file streaming, SHA256 hashing, MinIO object upload, PostgreSQL record creation, and RabbitMQ job publishing — all with native Go concurrency to support 10–50 simultaneous uploads with lower latency and higher throughput than the current Python implementation.
@@ -34,22 +68,9 @@ Fast, reliable file ingestion that never drops uploads under concurrent load —
 
 ### Active
 
-<!-- New capabilities for the Go ingestion service. -->
+<!-- All v1.0 requirements shipped. Next milestone requirements TBD via /gsd-new-milestone -->
 
-- [ ] Go microservice implementing `POST /api/v1/files` with identical API contract (request/response schema)
-- [ ] Native Go concurrency (goroutines) for 10–50 simultaneous uploads
-- [x] Direct PostgreSQL writes using the exact existing `files` and `jobs` table schema — Validated in Phase 3
-- [x] Direct RabbitMQ AMQP publishing (no Python intermediary) — Validated in Phase 3
-- [x] Direct MinIO S3 upload via Go SDK — Validated in Phase 2
-- [x] Streaming multipart processing without full file buffering in memory — Validated in Phase 2
-- [x] Configuration via environment variables (same vars as current backend: `DATABASE_URL`, `MINIO_*`, `RABBITMQ_URL`, etc.) — Validated in Phase 1
-- [x] Health check endpoint (`GET /healthz`) for Kubernetes liveness/readiness probes — Validated in Phase 1
-- [x] Dockerfile for containerized deployment (multi-stage build, minimal image) — Validated in Phase 1
-- [x] Docker Compose service entry alongside existing backend/worker/infra services — Validated in Phase 1
-- [ ] Kubernetes manifests (Deployment, Service) in `k8s/` directory
-- [ ] Nginx/proxy routing so frontend hits Go service for uploads, FastAPI for everything else
-- [ ] Graceful shutdown with in-flight upload draining
-- [ ] Prometheus metrics endpoint for upload throughput, latency, error rates
+*No active requirements. All v1.0 items shipped — see [v1.0 archive](milestones/v1.0-REQUIREMENTS.md).*
 
 ### Out of Scope
 
@@ -120,4 +141,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-27 after Phase 3 completion*
+*Last updated: 2026-03-28 — v1.0 milestone archived*
