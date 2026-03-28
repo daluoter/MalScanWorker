@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: malscan-ingest
+  namespace: malscan
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: malscan-ingest
+  template:
+    metadata:
+      labels:
+        app: malscan-ingest
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: ingest
+          image: ghcr.io/daluoter/malscan-ingest:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: malscan-config
+            - secretRef:
+                name: malscan-secrets
+          env:
+            - name: PORT
+              value: "8080"
+            - name: MAX_FILE_SIZE
+              value: "104857600"
+            - name: SHUTDOWN_TIMEOUT
+              value: "30s"
+            - name: CORS_ORIGINS
+              value: "*"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: tmp-volume
+              mountPath: /tmp
+      volumes:
+        - name: tmp-volume
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: malscan-ingest
+  namespace: malscan
+spec:
+  type: ClusterIP
+  selector:
+    app: malscan-ingest
+  ports:
+    - port: 8080
+      targetPort: 8080
