@@ -1,3 +1,5 @@
+[English](README.en.md) | 繁體中文
+
 # MalScanWorker
 
 惡意附件分析 Pipeline 系統
@@ -5,12 +7,35 @@
 ## 架構
 
 ```
-User → GitHub Pages (React) → FastAPI → MinIO + Supabase + RabbitMQ
-                                              ↓
-                                         Worker(s) ← clamscan/yara CLI
-                                              ↓
-                                         Supabase (reports)
+User → GitHub Pages (React) → Nginx Reverse Proxy
+                                    │
+                         ┌──────────┴──────────┐
+                         │                      │
+                   POST /api/v1/files    GET /api/v1/**
+                         │                      │
+                         ▼                      ▼
+                Go Ingest Service         FastAPI (Backend)
+              (chi + pgx + minio-go        (SQLAlchemy + asyncpg)
+               + amqp091-go)                    │
+                    │                           │
+          ┌─────────┼─────────┐                 │
+          ▼         ▼         ▼                 │
+       MinIO   PostgreSQL  RabbitMQ             │
+      (檔案)    (metadata)    │                 │
+                              ▼                 │
+                         Worker(s) ◄────────────┘
+                      clamscan / yara CLI
+                              │
+                              ▼
+                     Supabase PostgreSQL
+                         (reports)
 ```
+
+**資料流：**
+1. 使用者透過前端上傳檔案 → Nginx 依據路由分流
+2. **Go Ingest Service** 處理檔案上傳：存入 MinIO、寫入 job metadata 至 PostgreSQL、發布任務至 RabbitMQ
+3. **Worker(s)** 從 RabbitMQ 消費任務，執行 ClamAV / YARA 掃描，將分析報告寫回資料庫
+4. **FastAPI Backend** 提供 job 狀態查詢與報告取得 API
 
 ## 快速開始
 
@@ -69,6 +94,7 @@ sudo kubectl get nodes
 你只需要確保 CI/CD 通過，images 會自動建立在：
 - `ghcr.io/YOUR_USERNAME/malscan-api:latest`
 - `ghcr.io/YOUR_USERNAME/malscan-worker:latest`
+- `ghcr.io/YOUR_USERNAME/malscan-ingest:latest`
 
 #### 手動建構（可選）
 ```bash
@@ -81,6 +107,11 @@ docker push ghcr.io/YOUR_USERNAME/malscan-api:latest
 cd ../worker
 docker build -t ghcr.io/YOUR_USERNAME/malscan-worker:latest .
 docker push ghcr.io/YOUR_USERNAME/malscan-worker:latest
+
+# Ingest (Go)
+cd ../ingest
+docker build -t ghcr.io/YOUR_USERNAME/malscan-ingest:latest .
+docker push ghcr.io/YOUR_USERNAME/malscan-ingest:latest
 ```
 
 ### 5. 部署到 k3s
@@ -112,11 +143,13 @@ sudo chmod 777 /data/malscan/minio /data/malscan/rabbitmq
 編輯以下檔案，將 `OWNER` 替換為你的 GitHub 帳號：
 - `k8s/api/deployment.yaml`
 - `k8s/worker/deployment.yaml`
+- `k8s/ingest/deployment.yaml`
 
 ```bash
 # 使用 sed 批次替換
 sed -i 's/OWNER/YOUR_USERNAME/g' k8s/api/deployment.yaml
 sed -i 's/OWNER/YOUR_USERNAME/g' k8s/worker/deployment.yaml
+sed -i 's/OWNER/YOUR_USERNAME/g' k8s/ingest/deployment.yaml
 ```
 
 #### 5.5 部署所有資源
@@ -137,8 +170,10 @@ sudo kubectl apply -f k8s/rabbitmq/deployment.yaml
 
 # 4. 部署應用服務
 sudo kubectl apply -f k8s/yara-rules/
+sudo kubectl apply -f k8s/ingest/
 sudo kubectl apply -f k8s/api/
 sudo kubectl apply -f k8s/worker/
+sudo kubectl apply -f k8s/nginx/
 ```
 
 #### 5.6 驗證部署
@@ -218,7 +253,7 @@ https://random-words-here.trycloudflare.com
 
 開發時，我們需要兩個部分：
 1. **基礎設施（Infra）**：PostgreSQL, MinIO, RabbitMQ, ClamAV
-2. **應用程式（App）**：前端、後端 API、Worker
+2. **應用程式（App）**：前端、Ingest 服務、後端 API、Worker
 
 > ⚠️ **避免「幽靈消費者」問題 (Ghost Consumer)**
 >
@@ -229,7 +264,7 @@ https://random-words-here.trycloudflare.com
 
 ### 1. 啟動基礎設施 (PostgreSQL, MinIO, RabbitMQ, ClamAV)
 
-在專案根目錄執行，僅啟動所需的基礎設施，**不啟動** API 和 Worker：
+在專案根目錄執行，僅啟動所需的基礎設施，**不啟動** API、Ingest 和 Worker：
 
 ```bash
 docker compose up -d postgres minio rabbitmq clamav
@@ -266,6 +301,21 @@ SANDBOX_MOCK=true
 EOF
 ```
 
+#### Ingest (`ingest/.env`)
+```bash
+cd ../ingest
+cat <<EOF > .env
+LISTEN_ADDR=:8080
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/malscan?sslmode=disable
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_USE_SSL=false
+MINIO_BUCKET=uploads
+AMQP_URL=amqp://guest:guest@localhost:5672/
+EOF
+```
+
 > 💡 資料庫表格會在後端和 Worker 啟動時自動建立，無需手動執行 migration。
 
 ### 3. 啟動前端
@@ -275,14 +325,20 @@ npm install
 npm run dev
 ```
 
-### 4. 啟動後端
+### 4. 啟動 Ingest 服務 (Go)
+```bash
+cd ingest
+go run ./cmd/server
+```
+
+### 5. 啟動後端
 ```bash
 cd backend
 poetry install
 poetry run uvicorn malscan.main:app --reload
 ```
 
-### 5. 啟動 Worker
+### 6. 啟動 Worker
 ```bash
 cd worker
 poetry install
@@ -293,8 +349,8 @@ poetry run python -m malscan_worker.main
 
 若你完成開發，想在本機以 **完整容器化** 的方式測試整個系統：
 
-1. **請先確保關閉**所有本機正在運行的 `poetry run`（API 和 Worker），以避免潛在的連線或消費者衝突。
-2. 執行以下指令，強制重新編譯修改過的 Worker 與 API image，確保容器使用的是最新的程式碼：
+1. **請先確保關閉**所有本機正在運行的 `poetry run` 和 `go run`（API、Ingest 和 Worker），以避免潛在的連線或消費者衝突。
+2. 執行以下指令，強制重新編譯修改過的 Worker、API 和 Ingest image，確保容器使用的是最新的程式碼：
 
 ```bash
 # 在專案根目錄下
@@ -305,19 +361,21 @@ docker compose up -d --build
 
 ## API 端點
 
-| 方法 | 路徑 | 說明 |
-|------|------|------|
-| POST | `/api/v1/files` | 上傳檔案進行分析 |
-| GET | `/api/v1/jobs/{job_id}` | 查詢分析狀態 |
-| GET | `/api/v1/reports/{job_id}` | 取得分析報告 |
+| 方法 | 路徑 | 處理服務 | 說明 |
+|------|------|----------|------|
+| POST | `/api/v1/files` | Go Ingest Service | 上傳檔案進行分析 |
+| GET | `/api/v1/jobs/{job_id}` | FastAPI | 查詢分析狀態 |
+| GET | `/api/v1/reports/{job_id}` | FastAPI | 取得分析報告 |
 
 ---
 
 ## 技術棧
 
 - **前端:** React 18 + TypeScript + Vite
+- **Ingest:** Go 1.25 + chi + pgx + minio-go + amqp091-go（檔案接收層）
 - **後端:** FastAPI + SQLAlchemy + asyncpg
 - **Worker:** Python + clamscan CLI + yara CLI
+- **反向代理:** Nginx（路由分流至 Ingest / Backend）
 - **佇列:** RabbitMQ
 - **儲存:** MinIO + Supabase PostgreSQL
 - **容器:** k3s + GHCR
