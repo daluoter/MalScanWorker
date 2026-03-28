@@ -182,22 +182,47 @@ func TestHandler_ValidUpload(t *testing.T) {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
 	}
 
-	var resp map[string]any
+	// Unmarshal into typed UploadResponse (not map[string]any)
+	var resp upload.UploadResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("parse response: %v", err)
+		t.Fatalf("parse UploadResponse: %v", err)
 	}
 
-	if resp["sha256"] != expectedKey {
-		t.Errorf("sha256 = %q, want %q", resp["sha256"], expectedKey)
+	if resp.SHA256 != expectedKey {
+		t.Errorf("sha256 = %q, want %q", resp.SHA256, expectedKey)
 	}
-	if resp["job_id"] != mockStore.jobRec.ID.String() {
-		t.Errorf("job_id = %q, want %q", resp["job_id"], mockStore.jobRec.ID.String())
+	if resp.JobID != mockStore.jobRec.ID.String() {
+		t.Errorf("job_id = %q, want %q", resp.JobID, mockStore.jobRec.ID.String())
 	}
-	if resp["file_id"] != mockStore.fileRec.ID.String() {
-		t.Errorf("file_id = %q, want %q", resp["file_id"], mockStore.fileRec.ID.String())
+	if resp.FileID != mockStore.fileRec.ID.String() {
+		t.Errorf("file_id = %q, want %q", resp.FileID, mockStore.fileRec.ID.String())
 	}
-	if resp["status"] != "queued" {
-		t.Errorf("status = %q, want %q", resp["status"], "queued")
+	if resp.Status != "queued" {
+		t.Errorf("status = %q, want %q", resp.Status, "queued")
+	}
+	if resp.CreatedAt == "" {
+		t.Error("created_at is empty")
+	}
+
+	// Verify created_at is parseable as ISO 8601 with timezone
+	_, parseErr := time.Parse("2006-01-02T15:04:05.999999+00:00", resp.CreatedAt)
+	if parseErr != nil {
+		// Try RFC3339 fallback for compatibility
+		_, parseErr = time.Parse(time.RFC3339, resp.CreatedAt)
+		if parseErr != nil {
+			t.Errorf("created_at %q is not valid ISO 8601: %v", resp.CreatedAt, parseErr)
+		}
+	}
+
+	// Verify JSON field names match Python UploadResponse exactly
+	var rawResp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rawResp); err != nil {
+		t.Fatalf("parse raw response: %v", err)
+	}
+	for _, field := range []string{"job_id", "file_id", "sha256", "status", "created_at"} {
+		if _, ok := rawResp[field]; !ok {
+			t.Errorf("response missing expected field %q", field)
+		}
 	}
 
 	// Verify mock received correct data
@@ -409,8 +434,8 @@ func TestHandler_MQPublishFailure(t *testing.T) {
 		t.Fatalf("parse response: %v", err)
 	}
 	errObj := resp["error"].(map[string]any)
-	if errObj["code"] != "QUEUE_UNAVAILABLE" {
-		t.Errorf("error.code = %q, want %q", errObj["code"], "QUEUE_UNAVAILABLE")
+	if errObj["code"] != "QUEUE_PUBLISH_FAILED" {
+		t.Errorf("error.code = %q, want %q", errObj["code"], "QUEUE_PUBLISH_FAILED")
 	}
 
 	// MarkJobFailed should have been called
@@ -495,6 +520,42 @@ func TestHandler_ParentJobDepthExceeded(t *testing.T) {
 	errObj := resp["error"].(map[string]any)
 	if errObj["code"] != "INVALID_REQUEST" {
 		t.Errorf("error.code = %q, want %q", errObj["code"], "INVALID_REQUEST")
+	}
+}
+
+func TestHandler_MaxBytesError(t *testing.T) {
+	mock := &mockUploader{}
+	mockStore := newDefaultMockFileStore()
+	mockPub := &mockJobPublisher{}
+	h := upload.NewHandler(mock, mockStore, mockPub, "test-bucket", 100*1024*1024, slog.Default())
+
+	// Create a multipart request with a large-ish body
+	fileContent := bytes.Repeat([]byte("A"), 100)
+	req := newMultipartRequest(t, "file", "test.exe", "application/octet-stream", fileContent)
+
+	// Wrap the request body with http.MaxBytesReader to simulate the server's
+	// 150MB limit being exceeded. Use a tiny limit (10 bytes) so the multipart
+	// reading triggers MaxBytesError.
+	w := httptest.NewRecorder()
+	req.Body = http.MaxBytesReader(w, req.Body, 10)
+
+	h.ServeHTTP(w, req)
+
+	// Should return 400 with FILE_TOO_LARGE in JSON envelope
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v; body: %s", err, w.Body.String())
+	}
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("response missing 'error' envelope, got: %v", resp)
+	}
+	if errObj["code"] != "FILE_TOO_LARGE" {
+		t.Errorf("error.code = %q, want %q", errObj["code"], "FILE_TOO_LARGE")
 	}
 }
 

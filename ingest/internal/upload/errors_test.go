@@ -104,3 +104,26 @@ func TestWriteError(t *testing.T) {
 		})
 	}
 }
+
+func TestErrorCodeConstants(t *testing.T) {
+	// Verify CodeQueuePublishFailed matches Python exactly
+	if upload.CodeQueuePublishFailed != "QUEUE_PUBLISH_FAILED" {
+		t.Errorf("CodeQueuePublishFailed = %q, want %q", upload.CodeQueuePublishFailed, "QUEUE_PUBLISH_FAILED")
+	}
+
+	// Verify all error codes are non-empty and match expected values
+	codes := map[string]string{
+		"CodeFileTooLarge":       upload.CodeFileTooLarge,
+		"CodeNoFile":             upload.CodeNoFile,
+		"CodeInvalidRequest":     upload.CodeInvalidRequest,
+		"CodeInternalError":      upload.CodeInternalError,
+		"CodeStorageError":       upload.CodeStorageError,
+		"CodeQueueUnavailable":   upload.CodeQueueUnavailable,
+		"CodeQueuePublishFailed": upload.CodeQueuePublishFailed,
+	}
+	for name, val := range codes {
+		if val == "" {
+			t.Errorf("%s is empty", name)
+		}
+	}
+}
