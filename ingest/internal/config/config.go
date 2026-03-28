@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 )
@@ -27,6 +28,8 @@ type Config struct {
 	LogLevel      string `env:"LOG_LEVEL"               envDefault:"INFO"`
 	Port          int    `env:"PORT"                    envDefault:"8080"`
 	StagesTotal   int    `env:"STAGES_TOTAL"            envDefault:"5"`
+
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
 }
 
 // Load parses environment variables into Config and transforms DATABASE_URL.
