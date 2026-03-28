@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: "Completed 04-01-PLAN.md and 04-02-PLAN.md"
-last_updated: "2026-03-28T06:25:42Z"
+status: completed
+stopped_at: Completed 04-03-PLAN.md — Phase 04 complete
+last_updated: "2026-03-28T06:31:59.077Z"
 last_activity: 2026-03-28
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 11
-  completed_plans: 10
-  percent: 70
+  completed_plans: 11
+  percent: 100
 ---
 
 # Project State
@@ -21,24 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Fast, reliable file ingestion that never drops uploads under concurrent load — the gateway through which every malware sample enters the analysis pipeline.
-**Current focus:** Phase 04 in progress — API contract and CORS complete
+**Current focus:** Phase 04 complete — all 3 plans done (API contract, CORS, graceful shutdown)
 
 ## Current Position
 
 Phase: 4
-Plan: 02 complete (01 and 02 done in parallel)
-Status: Phase 4 plans 01 (API contract) and 02 (CORS) complete
+Plan: 03 complete (all 3 plans complete)
+Status: Phase 4 complete — ready for Phase 5 (deployment)
 Last activity: 2026-03-28
 
-Progress: [███████░░░] 70%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 10
+- Total plans completed: 11
 - Average duration: ~4m
-- Total execution time: ~46m
+- Total execution time: ~48m
 
 **By Phase:**
 
@@ -47,6 +47,7 @@ Progress: [███████░░░] 70%
 | Phase 01 | 3 | ~11m | ~3m43s |
 | Phase 02 | 2 | ~10m | ~5m |
 | Phase 03 | 3 | ~18m | ~6m |
+| Phase 04 | 3 | ~9m | ~3m |
 
 **Recent Trend:**
 
@@ -62,6 +63,7 @@ Progress: [███████░░░] 70%
 | Phase 03 P03 | ~8m | 2 tasks | 4 files |
 | Phase 04 P02 | ~3m | 1 task | 5 files |
 | Phase 04 P01 | ~4m | 1 task (TDD) | 4 files |
+| Phase 04 P03 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -99,6 +101,8 @@ Recent decisions affecting current work:
 - [Phase 04]: Keep both CodeQueueUnavailable and CodeQueuePublishFailed — former for generic MQ, latter matches Python exactly
 - [Phase 04]: Timestamp format `2006-01-02T15:04:05.999999+00:00` matches Pydantic datetime microsecond precision
 - [Phase 04]: MaxBytesError checked in three paths (MultipartReader, NextPart, stream Read) for complete coverage
+- [Phase 04]: caarlos0/env natively parses time.Duration — no custom parser needed for SHUTDOWN_TIMEOUT
+- [Phase 04]: Shutdown logs both start (with timeout value) and completion for K8s operational visibility
 
 ### Pending Todos
 
@@ -112,6 +116,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-28T06:25:42Z
-Stopped at: Completed 04-01-PLAN.md and 04-02-PLAN.md
-Resume file: .planning/phases/04-api-contract-production-readiness/04-01-SUMMARY.md
+Last session: 2026-03-28T06:31:59.074Z
+Stopped at: Completed 04-03-PLAN.md — Phase 04 complete
+Resume file: None

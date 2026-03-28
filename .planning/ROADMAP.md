@@ -84,7 +84,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Typed UploadResponse struct, error code audit & MaxBytesError handling
 - [x] 04-02-PLAN.md — CORS middleware (go-chi/cors) matching Python FastAPI config
-- [ ] 04-03-PLAN.md — Configurable graceful shutdown timeout
+- [x] 04-03-PLAN.md — Configurable graceful shutdown timeout
 
 ### Phase 5: Integration & Deployment
 **Goal**: Go ingest service runs alongside the existing FastAPI backend in production with transparent proxy routing and Kubernetes deployment manifests

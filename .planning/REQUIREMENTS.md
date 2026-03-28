@@ -50,7 +50,7 @@
 - [x] **OPS-01**: `GET /healthz` endpoint returns HTTP 200 when service is alive, for Kubernetes liveness probes
 - [x] **OPS-02**: JSON structured logging via `log/slog` with fields: `job_id`, `file_id`, `sha256`, `duration_ms`, `error`, `level`, `msg`, `time` — parseable by existing log aggregation
 - [x] **OPS-03**: All configuration via environment variables: `DATABASE_URL`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_SECURE`, `RABBITMQ_URL`, `CORS_ORIGINS`, `MAX_FILE_SIZE`, `STAGES_TOTAL`, `LOG_LEVEL`, `PORT`
-- [ ] **OPS-04**: Graceful shutdown on SIGTERM/SIGINT — drains in-flight uploads, closes DB pool and RabbitMQ connection, respects configurable shutdown timeout
+- [x] **OPS-04**: Graceful shutdown on SIGTERM/SIGINT — drains in-flight uploads, closes DB pool and RabbitMQ connection, respects configurable shutdown timeout
 - [x] **OPS-05**: Multi-stage Dockerfile (`golang:alpine` → `alpine`) producing minimal static binary image (~15MB)
 - [x] **OPS-06**: Docker Compose service entry for `ingest` alongside existing `api`, `worker`, and infrastructure services
 
@@ -114,7 +114,7 @@
 | OPS-01 | Phase 1 | Complete |
 | OPS-02 | Phase 1 | Complete |
 | OPS-03 | Phase 1 | Complete |
-| OPS-04 | Phase 4 | Pending |
+| OPS-04 | Phase 4 | Complete |
 | OPS-05 | Phase 1 | Complete |
 | OPS-06 | Phase 1 | Complete |
 | DEPLOY-01 | Phase 5 | Pending |
