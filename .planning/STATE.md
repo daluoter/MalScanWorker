@@ -41,3 +41,4 @@ Deferred v2 requirements available in `.planning/milestones/v1.0-REQUIREMENTS.md
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260328-tcw | 優化README.md並附上英文版本 | 2026-03-28 | 5efb517 | [260328-tcw-readme-md](./quick/260328-tcw-readme-md/) |
+| 260328-uie | Fix worker startup & update backend settings | 2026-03-28 | 008ff52 | [260328-uie-fix-worker-startup-update-backend-settin](./quick/260328-uie-fix-worker-startup-update-backend-settin/) |
