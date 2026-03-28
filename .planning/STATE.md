@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-28)
 
 Milestone: v1.0 (archived)
 Status: All 5 phases complete. 32/32 requirements satisfied. Tagged and archived.
-Last activity: 2026-03-28
+Last activity: 2026-03-28 - Completed quick task 260328-tcw: 優化README.md並附上英文版本
 
 Progress: [██████████] 100% (archived)
 
@@ -35,3 +35,9 @@ Progress: [██████████] 100% (archived)
 
 Run `/gsd-new-milestone` to define v2.0 goals, requirements, and roadmap.
 Deferred v2 requirements available in `.planning/milestones/v1.0-REQUIREMENTS.md`.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260328-tcw | 優化README.md並附上英文版本 | 2026-03-28 | 5efb517 | [260328-tcw-readme-md](./quick/260328-tcw-readme-md/) |
