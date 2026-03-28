@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-28)
 
 Milestone: v1.0 (archived)
 Status: All 5 phases complete. 32/32 requirements satisfied. Tagged and archived.
-Last activity: 2026-03-28 - Completed quick task 260328-uie: Fix worker startup: update backend Settings model for clamav/sandbox env vars and fix ingest Go service entrypoint
+Last activity: 2026-03-28 - Completed quick task 260328-uu7: Fix ingest startup — add .env auto-loading and fix AMQP_URL key mismatch
 
 Progress: [██████████] 100% (archived)
 
@@ -42,3 +42,4 @@ Deferred v2 requirements available in `.planning/milestones/v1.0-REQUIREMENTS.md
 |---|-------------|------|--------|-----------|
 | 260328-tcw | 優化README.md並附上英文版本 | 2026-03-28 | 5efb517 | [260328-tcw-readme-md](./quick/260328-tcw-readme-md/) |
 | 260328-uie | Fix worker startup: update backend Settings model for clamav/sandbox env vars and fix ingest Go service entrypoint | 2026-03-28 | 52e2212 | [260328-uie-fix-worker-startup-update-backend-settin](./quick/260328-uie-fix-worker-startup-update-backend-settin/) |
+| 260328-uu7 | Fix ingest startup: add .env auto-loading and fix AMQP_URL→RABBITMQ_URL key mismatch | 2026-03-28 | f6e2034 | [260328-uu7-fix-ingest-startup-add-env-auto-loading-](./quick/260328-uu7-fix-ingest-startup-add-env-auto-loading-/) |
