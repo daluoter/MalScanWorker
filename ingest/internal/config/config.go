@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
 
 // Config holds all service configuration parsed from environment variables.
@@ -36,6 +37,11 @@ type Config struct {
 // The shared .env file uses postgresql+asyncpg:// (SQLAlchemy dialect).
 // pgx requires plain postgresql:// — we strip +asyncpg here (per DB-07).
 func Load() (*Config, error) {
+	// Load .env file for local development. Errors are silently ignored
+	// so production deployments (no .env file) continue working via OS env vars.
+	// godotenv does NOT override existing OS env vars — OS always wins.
+	_ = godotenv.Load()
+
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

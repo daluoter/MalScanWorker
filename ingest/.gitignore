@@ -11,3 +11,6 @@
 
 # Test
 coverage.out
+
+# Environment
+.env
