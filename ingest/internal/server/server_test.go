@@ -80,22 +80,25 @@ func TestCORSPreflightSpecificOrigins(t *testing.T) {
 	}
 }
 
-// TestCORSAllowedMethods verifies Access-Control-Allow-Methods matches Python config.
+// TestCORSAllowedMethods verifies each configured method is accepted by preflight.
+// go-chi/cors echoes back the requested method (not all), so we test each individually.
 func TestCORSAllowedMethods(t *testing.T) {
 	r := server.NewRouter(nil, nil, "*")
 
-	req := httptest.NewRequest("OPTIONS", "/api/v1/files", nil)
-	req.Header.Set("Origin", "http://localhost:3000")
-	req.Header.Set("Access-Control-Request-Method", "POST")
+	for _, method := range []string{"GET", "POST", "PUT", "DELETE", "PATCH"} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest("OPTIONS", "/api/v1/files", nil)
+			req.Header.Set("Origin", "http://localhost:3000")
+			req.Header.Set("Access-Control-Request-Method", method)
 
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
 
-	methods := rr.Header().Get("Access-Control-Allow-Methods")
-	for _, m := range []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"} {
-		if !strings.Contains(methods, m) {
-			t.Errorf("Access-Control-Allow-Methods missing %s, got %q", m, methods)
-		}
+			methods := rr.Header().Get("Access-Control-Allow-Methods")
+			if !strings.Contains(methods, method) {
+				t.Errorf("expected Access-Control-Allow-Methods to include %s, got %q", method, methods)
+			}
+		})
 	}
 }
 
