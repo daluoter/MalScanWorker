@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # Stages
     stages_total: int = 5
 
+    # ClamAV (worker-specific, optional for backend)
+    clamav_host: str = "localhost"
+    clamav_port: int = 3310
+
+    # Sandbox (worker-specific, optional for backend)
+    sandbox_mock: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
