@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 // setRequiredEnv sets the minimum required env vars for config.Load() to succeed.
@@ -88,8 +89,8 @@ func TestConfigRequiredMissing(t *testing.T) {
 		"DATABASE_URL", "MINIO_ENDPOINT", "MINIO_ACCESS_KEY",
 		"MINIO_SECRET_KEY", "RABBITMQ_URL",
 	} {
-		t.Setenv(key, "")  // register for cleanup
-		os.Unsetenv(key)   // actually unset
+		t.Setenv(key, "") // register for cleanup
+		os.Unsetenv(key)  // actually unset
 	}
 
 	_, err := Load()
@@ -118,6 +119,50 @@ func TestConfigCustomValues(t *testing.T) {
 	}
 	if cfg.MaxFileSize != 52428800 {
 		t.Errorf("MaxFileSize = %d, want %d", cfg.MaxFileSize, 52428800)
+	}
+}
+
+func TestShutdownTimeoutDefault(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	want := 30 * time.Second
+	if cfg.ShutdownTimeout != want {
+		t.Errorf("ShutdownTimeout = %v, want %v", cfg.ShutdownTimeout, want)
+	}
+}
+
+func TestShutdownTimeoutCustom(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("SHUTDOWN_TIMEOUT", "45s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	want := 45 * time.Second
+	if cfg.ShutdownTimeout != want {
+		t.Errorf("ShutdownTimeout = %v, want %v", cfg.ShutdownTimeout, want)
+	}
+}
+
+func TestShutdownTimeoutCustomShort(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("SHUTDOWN_TIMEOUT", "10s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	want := 10 * time.Second
+	if cfg.ShutdownTimeout != want {
+		t.Errorf("ShutdownTimeout = %v, want %v", cfg.ShutdownTimeout, want)
 	}
 }
 
