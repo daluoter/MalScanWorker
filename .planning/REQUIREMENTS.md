@@ -56,8 +56,8 @@
 
 ### Integration & Deployment
 
-- [ ] **DEPLOY-01**: Nginx (or equivalent) reverse proxy config routing `POST /api/v1/files` to Go ingest service and all other paths to FastAPI backend
-- [ ] **DEPLOY-02**: Kubernetes manifests in `k8s/ingest/` — Deployment, Service, with liveness probe on `/healthz`, resource limits, and security context
+- [x] **DEPLOY-01**: Nginx (or equivalent) reverse proxy config routing `POST /api/v1/files` to Go ingest service and all other paths to FastAPI backend
+- [x] **DEPLOY-02**: Kubernetes manifests in `k8s/ingest/` — Deployment, Service, with liveness probe on `/healthz`, resource limits, and security context
 
 ## v2 Requirements (Deferred)
 
@@ -117,8 +117,8 @@
 | OPS-04 | Phase 4 | Complete |
 | OPS-05 | Phase 1 | Complete |
 | OPS-06 | Phase 1 | Complete |
-| DEPLOY-01 | Phase 5 | Pending |
-| DEPLOY-02 | Phase 5 | Pending |
+| DEPLOY-01 | Phase 5 | Complete |
+| DEPLOY-02 | Phase 5 | Complete |
 
 ---
 *Generated: 2026-03-27*

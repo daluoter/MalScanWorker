@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Phase 5 context gathered
-last_updated: "2026-03-28T07:14:26.685Z"
+stopped_at: Completed 05-01-PLAN.md and 05-02-PLAN.md — Phase 5 complete
+last_updated: "2026-03-28T07:28:24.927Z"
 last_activity: 2026-03-28
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
+  completed_phases: 5
+  total_plans: 13
+  completed_plans: 13
   percent: 100
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Fast, reliable file ingestion that never drops uploads under concurrent load — the gateway through which every malware sample enters the analysis pipeline.
-**Current focus:** Phase 04 complete — all 3 plans done (API contract, CORS, graceful shutdown)
+**Current focus:** Phase 05 complete — all 5 phases done. Milestone v1.0 complete.
 
 ## Current Position
 
-Phase: 4
-Plan: 03 complete (all 3 plans complete)
-Status: Phase 4 complete — ready for Phase 5 (deployment)
+Phase: 5
+Plan: 02 complete (all 2 plans complete)
+Status: Phase 5 complete — ALL PHASES COMPLETE. Milestone v1.0 delivered.
 Last activity: 2026-03-28
 
 Progress: [██████████] 100%
@@ -36,9 +36,9 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 11
+- Total plans completed: 13
 - Average duration: ~4m
-- Total execution time: ~48m
+- Total execution time: ~51m
 
 **By Phase:**
 
@@ -48,6 +48,7 @@ Progress: [██████████] 100%
 | Phase 02 | 2 | ~10m | ~5m |
 | Phase 03 | 3 | ~18m | ~6m |
 | Phase 04 | 3 | ~9m | ~3m |
+| Phase 05 | 2 | ~3m | ~1m30s |
 
 **Recent Trend:**
 
@@ -64,6 +65,8 @@ Progress: [██████████] 100%
 | Phase 04 P02 | ~3m | 1 task | 5 files |
 | Phase 04 P01 | ~4m | 1 task (TDD) | 4 files |
 | Phase 04 P03 | 2min | 2 tasks | 3 files |
+| Phase 05 P01 | 2m | 1 tasks | 2 files |
+| Phase 05 P02 | 1m | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -103,6 +106,9 @@ Recent decisions affecting current work:
 - [Phase 04]: MaxBytesError checked in three paths (MultipartReader, NextPart, stream Read) for complete coverage
 - [Phase 04]: caarlos0/env natively parses time.Duration — no custom parser needed for SHUTDOWN_TIMEOUT
 - [Phase 04]: Shutdown logs both start (with timeout value) and completion for K8s operational visibility
+- [Phase 05]: Nginx limit_except POST for method-based routing on /api/v1/files
+- [Phase 05]: ClusterIP (not NodePort) for ingest K8s Service — internal-only access via proxy
+- [Phase 05]: proxy_request_buffering off + 150m body size in Nginx for streaming uploads
 
 ### Pending Todos
 
@@ -116,6 +122,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-28T07:14:26.672Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-integration-deployment/05-CONTEXT.md
+Last session: 2026-03-28T07:28:24.925Z
+Stopped at: Completed 05-01-PLAN.md and 05-02-PLAN.md — Phase 5 complete
+Resume file: None

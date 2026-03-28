@@ -96,8 +96,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Nginx reverse proxy config + Docker Compose integration
-- [ ] 05-02-PLAN.md — Kubernetes Deployment + ClusterIP Service for ingest
+- [x] 05-01-PLAN.md — Nginx reverse proxy config + Docker Compose integration
+- [x] 05-02-PLAN.md — Kubernetes Deployment + ClusterIP Service for ingest
 
 ## Progress
 
