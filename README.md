@@ -312,7 +312,7 @@ MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 MINIO_USE_SSL=false
 MINIO_BUCKET=uploads
-AMQP_URL=amqp://guest:guest@localhost:5672/
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 EOF
 ```
 
