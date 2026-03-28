@@ -328,7 +328,7 @@ npm run dev
 ### 4. Start the Ingest Service (Go)
 ```bash
 cd ingest
-go run ./cmd/server
+go run ./cmd/ingest
 ```
 
 ### 5. Start the Backend

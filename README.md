@@ -328,7 +328,7 @@ npm run dev
 ### 4. 啟動 Ingest 服務 (Go)
 ```bash
 cd ingest
-go run ./cmd/server
+go run ./cmd/ingest
 ```
 
 ### 5. 啟動後端
