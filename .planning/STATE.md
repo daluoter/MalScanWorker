@@ -21,7 +21,7 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-27)
 
 **Core value:** Fast, reliable file ingestion that never drops uploads under concurrent load — the gateway through which every malware sample enters the analysis pipeline.
-**Current focus:** Phase 04 in progress — CORS middleware complete
+**Current focus:** Phase 04 in progress — API contract and CORS complete
 
 ## Current Position
 
@@ -96,6 +96,9 @@ Recent decisions affecting current work:
 - [Phase 04]: CORS middleware before Recoverer for panic-safe CORS headers
 - [Phase 04]: Route always registered (nil-safe handler) for CORS preflight to work on all paths
 - [Phase 04]: go-chi/cors echoes requested method individually, not all configured methods
+- [Phase 04]: Keep both CodeQueueUnavailable and CodeQueuePublishFailed — former for generic MQ, latter matches Python exactly
+- [Phase 04]: Timestamp format `2006-01-02T15:04:05.999999+00:00` matches Pydantic datetime microsecond precision
+- [Phase 04]: MaxBytesError checked in three paths (MultipartReader, NextPart, stream Read) for complete coverage
 
 ### Pending Todos
 
@@ -109,6 +112,6 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-03-28T06:24:44Z
-Stopped at: Completed 04-02-PLAN.md
-Resume file: .planning/phases/04-api-contract-production-readiness/04-02-SUMMARY.md
+Last session: 2026-03-28T06:25:42Z
+Stopped at: Completed 04-01-PLAN.md and 04-02-PLAN.md
+Resume file: .planning/phases/04-api-contract-production-readiness/04-01-SUMMARY.md

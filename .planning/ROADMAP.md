@@ -82,7 +82,7 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Typed UploadResponse struct, error code audit & MaxBytesError handling
+- [x] 04-01-PLAN.md — Typed UploadResponse struct, error code audit & MaxBytesError handling
 - [x] 04-02-PLAN.md — CORS middleware (go-chi/cors) matching Python FastAPI config
 - [ ] 04-03-PLAN.md — Configurable graceful shutdown timeout
 
