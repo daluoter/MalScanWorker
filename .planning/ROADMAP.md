@@ -79,7 +79,12 @@ Plans:
   2. All error paths return the envelope format `{"error": {"code": "ERROR_CODE", "message": "...", "details": {...}}}` with correct HTTP status codes: 400 (validation/size/depth), 422 (missing file field), 500 (storage/DB), 503 (queue unavailable)
   3. CORS middleware allows requests from configured frontend origins (via `CORS_ORIGINS` env var) with appropriate headers for multipart uploads
   4. On SIGTERM/SIGINT, the service stops accepting new connections, drains in-flight uploads to completion (within configurable timeout), then closes DB pool and RabbitMQ connection cleanly
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Typed UploadResponse struct, error code audit & MaxBytesError handling
+- [ ] 04-02-PLAN.md — CORS middleware (go-chi/cors) matching Python FastAPI config
+- [ ] 04-03-PLAN.md — Configurable graceful shutdown timeout
 
 ### Phase 5: Integration & Deployment
 **Goal**: Go ingest service runs alongside the existing FastAPI backend in production with transparent proxy routing and Kubernetes deployment manifests
