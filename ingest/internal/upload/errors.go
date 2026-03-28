@@ -7,12 +7,13 @@ import (
 
 // Error code constants matching the Python ApiError codes.
 const (
-	CodeFileTooLarge     = "FILE_TOO_LARGE"
-	CodeNoFile           = "NO_FILE"
-	CodeInvalidRequest   = "INVALID_REQUEST"
-	CodeInternalError    = "INTERNAL_ERROR"
-	CodeStorageError     = "STORAGE_ERROR"
-	CodeQueueUnavailable = "QUEUE_UNAVAILABLE"
+	CodeFileTooLarge       = "FILE_TOO_LARGE"
+	CodeNoFile             = "NO_FILE"
+	CodeInvalidRequest     = "INVALID_REQUEST"
+	CodeInternalError      = "INTERNAL_ERROR"
+	CodeStorageError       = "STORAGE_ERROR"
+	CodeQueueUnavailable   = "QUEUE_UNAVAILABLE"
+	CodeQueuePublishFailed = "QUEUE_PUBLISH_FAILED"
 )
 
 // ApiError represents a single error with code, message, and optional details.

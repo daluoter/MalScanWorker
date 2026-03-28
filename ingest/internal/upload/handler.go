@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -24,6 +23,15 @@ import (
 type ObjectUploader interface {
 	PutObject(ctx context.Context, bucketName string, objectName string,
 		reader io.Reader, objectSize int64, opts minio.PutObjectOptions) (minio.UploadInfo, error)
+}
+
+// UploadResponse matches backend/src/malscan/schemas/requests.py UploadResponse exactly.
+type UploadResponse struct {
+	JobID     string `json:"job_id"`
+	FileID    string `json:"file_id"`
+	SHA256    string `json:"sha256"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
 }
 
 // FileStore abstracts database operations for testing.
@@ -70,6 +78,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 1. Parse multipart stream — NOT r.ParseMultipartForm (CONTEXT.md decision)
 	reader, err := r.MultipartReader()
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			WriteError(w, http.StatusBadRequest, CodeFileTooLarge, "Request body too large", nil)
+			return
+		}
 		WriteError(w, http.StatusBadRequest, CodeInvalidRequest, "Invalid multipart request: "+err.Error(), nil)
 		return
 	}
@@ -86,6 +99,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				WriteError(w, http.StatusBadRequest, CodeFileTooLarge, "Request body too large", nil)
+				return
+			}
 			WriteError(w, http.StatusBadRequest, CodeInvalidRequest, "Error reading multipart: "+err.Error(), nil)
 			return
 		}
@@ -151,6 +169,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if readErr != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(readErr, &maxBytesErr) {
+				WriteError(w, http.StatusBadRequest, CodeFileTooLarge, "Request body too large", map[string]any{
+					"max_size_bytes": h.maxSize,
+				})
+				return
+			}
 			WriteError(w, http.StatusInternalServerError, CodeInternalError, "Error reading upload: "+readErr.Error(), nil)
 			return
 		}
@@ -221,7 +246,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if markErr := h.store.MarkJobFailed(r.Context(), jobRec.ID, "publish failed: "+err.Error()); markErr != nil {
 			h.logger.Error("failed to mark job as failed", "job_id", jobRec.ID.String(), "error", markErr)
 		}
-		WriteError(w, http.StatusServiceUnavailable, CodeQueueUnavailable, "Failed to publish job: "+err.Error(), nil)
+		WriteError(w, http.StatusServiceUnavailable, CodeQueuePublishFailed, "Failed to submit job to processing queue. Please try again.", nil)
 		return
 	}
 
@@ -231,13 +256,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if encErr := json.NewEncoder(w).Encode(map[string]any{
-		"job_id":     jobRec.ID.String(),
-		"file_id":    fileRec.ID.String(),
-		"sha256":     sha256Hash,
-		"status":     jobRec.Status,
-		"created_at": jobRec.CreatedAt.Format(time.RFC3339),
-	}); encErr != nil {
+	resp := UploadResponse{
+		JobID:     jobRec.ID.String(),
+		FileID:    fileRec.ID.String(),
+		SHA256:    sha256Hash,
+		Status:    jobRec.Status,
+		CreatedAt: jobRec.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999+00:00"),
+	}
+	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
 		h.logger.Error("failed to encode response", "error", encErr)
 	}
 }
