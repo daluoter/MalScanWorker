@@ -188,3 +188,32 @@ async def update_job_result(job_id: str, result: dict[str, Any]) -> None:
             log.error("job_result_store_failed", job_id=job_id, error=str(e))
             # Don't raise - result store failure should not block status update
             await session.rollback()
+
+
+async def increment_password_attempts(job_id: str) -> int:
+    """Atomically increment password attempts and return current count."""
+    async with AsyncSession(_engine) as session:
+        from sqlalchemy import text
+
+        stmt = text(
+            """
+            UPDATE jobs
+            SET password_attempts = password_attempts + 1,
+                updated_at = :updated_at
+            WHERE id = :job_id
+            RETURNING password_attempts
+            """
+        )
+
+        result = await session.execute(
+            stmt,
+            {
+                "job_id": UUID(job_id),
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        await session.commit()
+        attempts = result.scalar_one_or_none()
+        if attempts is None:
+            raise ValueError(f"Job not found: {job_id}")
+        return int(attempts)

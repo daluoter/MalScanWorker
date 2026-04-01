@@ -17,6 +17,7 @@ from malscan_worker.db import (
     update_job_stage,
     update_job_status,
 )
+from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
@@ -187,6 +188,8 @@ async def _run_stage(stage, ctx: StageContext) -> StageResult:
             artifacts=[],
             error=f"Stage timeout after {timeout}s",
         )
+    except (ArchivePasswordRequiredError, ArchiveWrongPasswordError):
+        raise
     except Exception as e:
         log.error("stage_error", job_id=job_id, stage=stage_name, error=str(e), exc_info=True)
         now = datetime.now(timezone.utc)
@@ -247,6 +250,7 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
                 sha256=job_data.get("sha256", ""),
                 original_filename=job_data.get("original_filename", "unknown"),
                 file_path=file_path,
+                archive_password=job_data.get("archive_password"),
                 previous_results=[],
                 job=job_instance,
                 db=session,
