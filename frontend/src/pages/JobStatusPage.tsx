@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { apiClient, JobStatus } from '../api/client'
 import PasswordForm from '../components/PasswordForm'
@@ -17,9 +17,13 @@ export default function JobStatusPage() {
     const [job, setJob] = useState<JobStatus | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [passwordSubmitError, setPasswordSubmitError] = useState<string | null>(null)
+    const previousStatusRef = useRef<JobStatus['status'] | null>(null)
 
     useEffect(() => {
         if (!jobId) return
+
+        setPasswordSubmitError(null)
+        previousStatusRef.current = null
 
         const url = apiClient.getJobStreamUrl(jobId)
         const es = new EventSource(url)
@@ -55,6 +59,15 @@ export default function JobStatusPage() {
             es.close()
         }
     }, [jobId, navigate])
+
+    useEffect(() => {
+        if (!job) return
+
+        if (previousStatusRef.current !== job.status) {
+            setPasswordSubmitError(null)
+            previousStatusRef.current = job.status
+        }
+    }, [job])
 
     const stageLabels: Record<string, string> = {
         'file-type': 'FILE_TYPE_DETECT',
@@ -100,9 +113,9 @@ export default function JobStatusPage() {
         try {
             await apiClient.submitArchivePassword(jobId, { password })
         } catch (submitError) {
-            setPasswordSubmitError(
-                submitError instanceof Error ? submitError.message : '提交密碼失敗，請再試一次'
-            )
+            const message = submitError instanceof Error ? submitError.message : '提交密碼失敗，請再試一次'
+            setPasswordSubmitError(message)
+            throw submitError
         }
     }
 

@@ -15,10 +15,11 @@ export default function PasswordForm({
 }: PasswordFormProps) {
     const [password, setPassword] = useState('')
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const isAttemptsExhausted = attemptsRemaining <= 0
 
     const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault()
-        if (!password.trim() || isSubmitting) return
+        if (!password.trim() || isSubmitting || isAttemptsExhausted) return
 
         setIsSubmitting(true)
         try {
@@ -42,6 +43,12 @@ export default function PasswordForm({
                 <span>剩餘次數: {attemptsRemaining}</span>
             </div>
 
+            {isAttemptsExhausted && (
+                <div className="mt-3 rounded-md border border-alert-red bg-alert-red/10 px-3 py-2 text-sm text-alert-red">
+                    已達密碼嘗試上限，無法再次提交密碼。
+                </div>
+            )}
+
             <form className="mt-4 flex flex-col gap-3" onSubmit={handleSubmit}>
                 <input
                     type="password"
@@ -50,13 +57,13 @@ export default function PasswordForm({
                     placeholder="輸入壓縮檔密碼"
                     className="w-full rounded-lg border border-slate-700 bg-deep-space px-3 py-2 text-white placeholder:text-slate-500 focus:border-caution-yellow focus:outline-none"
                     autoComplete="current-password"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isAttemptsExhausted}
                 />
 
                 <button
                     type="submit"
                     className="self-start rounded-lg bg-caution-yellow px-4 py-2 font-semibold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={isSubmitting || !password.trim()}
+                    disabled={isSubmitting || isAttemptsExhausted || !password.trim()}
                 >
                     {isSubmitting ? '提交中...' : '提交密碼'}
                 </button>
