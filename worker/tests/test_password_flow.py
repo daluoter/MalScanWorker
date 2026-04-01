@@ -109,6 +109,7 @@ async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack
 
     update_result.assert_awaited_once()
     saved_result = update_result.await_args.args[1]
+    assert saved_result["verdict"] == "unknown"
     assert (
         saved_result["results"]["archive_extract"]["reason"]
         == "Archive extraction failed after 3 incorrect password attempts"
@@ -121,3 +122,107 @@ async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack
     )
     message.ack.assert_awaited_once()
     message.reject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consumer_wrong_password_under_limit_sets_password_required_and_ack(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "55555555-5555-5555-5555-555555555555",
+            "file_id": "66666666-6666-6666-6666-666666666666",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        return_value=2,
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
+    )
+    update_result = mocker.patch(
+        "malscan_worker.consumer.update_job_result", new_callable=AsyncMock
+    )
+
+    await consumer.process_message(message)
+
+    update_status.assert_any_await(
+        "55555555-5555-5555-5555-555555555555",
+        "password_required",
+        error_message="Wrong archive password. Please try again.",
+    )
+    update_result.assert_not_awaited()
+    message.ack.assert_awaited_once()
+    message.reject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consumer_wrong_password_over_limit_treated_as_exhausted(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "77777777-7777-7777-7777-777777777777",
+            "file_id": "88888888-8888-8888-8888-888888888888",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        return_value=4,
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
+    )
+    update_result = mocker.patch(
+        "malscan_worker.consumer.update_job_result", new_callable=AsyncMock
+    )
+
+    await consumer.process_message(message)
+
+    update_result.assert_awaited_once()
+    update_status.assert_any_await("77777777-7777-7777-7777-777777777777", "done")
+    message.ack.assert_awaited_once()
+    message.reject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consumer_wrong_password_increment_failure_rejects_for_retry(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "99999999-9999-9999-9999-999999999999",
+            "file_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("db unavailable"),
+    )
+
+    await consumer.process_message(message)
+
+    message.ack.assert_not_awaited()
+    message.reject.assert_awaited_once_with(requeue=True)

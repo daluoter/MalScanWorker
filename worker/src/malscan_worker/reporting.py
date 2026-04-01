@@ -15,7 +15,7 @@ def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[s
             "size": 0,
             "original_filename": job_data.get("original_filename", "unknown"),
         },
-        "verdict": "clean",
+        "verdict": "unknown",
         "score": 0,
         "results": {
             "av_result": {

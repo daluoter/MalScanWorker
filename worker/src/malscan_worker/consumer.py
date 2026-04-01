@@ -121,20 +121,39 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
             await message.ack()
 
         except ArchiveWrongPasswordError:
-            attempts = await increment_password_attempts(job_id) if job_id else 0
+            try:
+                attempts = await increment_password_attempts(job_id) if job_id else 0
 
-            if job_id and attempts < 3:
-                await update_job_status(
-                    job_id,
-                    "password_required",
-                    error_message="Wrong archive password. Please try again.",
+                if job_id and attempts < 3:
+                    await update_job_status(
+                        job_id,
+                        "password_required",
+                        error_message="Wrong archive password. Please try again.",
+                    )
+                elif job_id and attempts >= 3:
+                    report_payload = build_password_attempts_exhausted_report(body)
+                    await update_job_result(job_id, report_payload)
+                    await update_job_status(job_id, "done")
+
+                await message.ack()
+            except Exception as e:
+                log.error(
+                    "password_retry_flow_failed",
+                    job_id=job_id,
+                    file_id=file_id,
+                    error=str(e),
+                    retry_count=retry_count,
                 )
-            elif job_id and attempts == 3:
-                report_payload = build_password_attempts_exhausted_report(body)
-                await update_job_result(job_id, report_payload)
-                await update_job_status(job_id, "done")
-
-            await message.ack()
+                if retry_count < MAX_MESSAGE_RETRIES:
+                    await message.reject(requeue=True)
+                else:
+                    if job_id:
+                        await update_job_status(
+                            job_id,
+                            "failed",
+                            error_message=f"Max retries exceeded: {e}",
+                        )
+                    await message.reject(requeue=False)
 
         except Exception as e:
             log.error(
