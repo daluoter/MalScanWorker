@@ -143,7 +143,7 @@ def test_submit_password_publish_failure_returns_503_and_does_not_commit(
     mock_db_session: AsyncMock,
     mock_rabbitmq,
 ):
-    """Queue publish failures should restore password_required state and return 503."""
+    """Queue publish failures should not commit queued transition."""
     job_id = uuid.uuid4()
     file_id = uuid.uuid4()
 
@@ -171,10 +171,10 @@ def test_submit_password_publish_failure_returns_503_and_does_not_commit(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Failed to submit password retry job"
-    assert mock_db_session.commit.await_count == 2
+    mock_db_session.commit.assert_not_awaited()
     assert mock_job.status == JobStatus.PASSWORD_REQUIRED.value
     assert mock_job.current_stage == "archive_extract"
-    assert mock_job.error_message == "Failed to submit password retry job. Please retry."
+    assert mock_job.error_message == "Password required"
 
 
 def test_get_job_status_includes_password_counters_and_required_status(
