@@ -169,7 +169,7 @@ export default function JobStatusPage() {
                             attemptsUsed={job.password_attempts}
                             attemptsRemaining={job.password_attempts_remaining}
                             onSubmit={handlePasswordSubmit}
-                            error={passwordSubmitError}
+                            error={passwordSubmitError ?? job.error_message ?? null}
                         />
                     </div>
                 )}

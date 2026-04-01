@@ -382,11 +382,30 @@ class ArchiveExtractStage(Stage):
             return {"files": []}
         extracted_files: list[tuple[str, str, int]] = []
         base_dir_abs = os.path.abspath(str(extract_dir))
+        archive_password: str | None = limits.get("archive_password")
 
-        with py7zr.SevenZipFile(str(file_path), mode="r") as szf:
+        with py7zr.SevenZipFile(str(file_path), mode="r", password=archive_password) as szf:
+            needs_password = getattr(szf, "needs_password", None)
+            if callable(needs_password) and needs_password() and not archive_password:
+                raise ArchivePasswordRequiredError("7z")
+
             # We skip pre-check size logic due to py7zr's all-or-nothing extraction
             # and rely on the fact that we follow up with os.walk
-            szf.extractall(path=base_dir_abs)
+            try:
+                szf.extractall(path=base_dir_abs)
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "wrong password" in msg or "bad password" in msg or "incorrect password" in msg:
+                    raise ArchiveWrongPasswordError("7z") from exc
+                if "password required" in msg or "encrypted" in msg:
+                    raise ArchivePasswordRequiredError("7z") from exc
+
+                py7zr_password_required = getattr(py7zr, "PasswordRequired", None)
+                if py7zr_password_required and isinstance(exc, py7zr_password_required):
+                    if archive_password:
+                        raise ArchiveWrongPasswordError("7z") from exc
+                    raise ArchivePasswordRequiredError("7z") from exc
+                raise
 
             for root, _, files in os.walk(base_dir_abs):
                 for fname in files:
@@ -402,6 +421,7 @@ class ArchiveExtractStage(Stage):
             return {"files": []}
         extracted_files: list[tuple[str, str, int]] = []
         base_dir_abs = os.path.abspath(str(extract_dir))
+        archive_password: str | None = limits.get("archive_password")
 
         with rarfile.RarFile(str(file_path), "r") as rf:
             for i, info in enumerate(rf.infolist()):
@@ -409,6 +429,10 @@ class ArchiveExtractStage(Stage):
                     break
                 if info.is_dir():
                     continue
+
+                needs_password = getattr(info, "needs_password", None)
+                if callable(needs_password) and needs_password() and not archive_password:
+                    raise ArchivePasswordRequiredError("rar")
 
                 target_path = os.path.join(base_dir_abs, info.filename)
                 if not os.path.abspath(target_path).startswith(base_dir_abs):
@@ -418,7 +442,20 @@ class ArchiveExtractStage(Stage):
                 if res:
                     return res
 
-                rf.extract(info, path=base_dir_abs)
+                try:
+                    rf.extract(info, path=base_dir_abs, pwd=archive_password)
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    rar_wrong_password = getattr(rarfile, "RarWrongPassword", None)
+                    if (rar_wrong_password and isinstance(exc, rar_wrong_password)) or (
+                        "wrong password" in msg
+                        or "bad password" in msg
+                        or "incorrect password" in msg
+                    ):
+                        raise ArchiveWrongPasswordError("rar") from exc
+                    if "password required" in msg or "encrypted" in msg:
+                        raise ArchivePasswordRequiredError("rar") from exc
+                    raise
                 extracted_files.append((target_path, info.filename, info.file_size))
 
         return {"files": extracted_files}
