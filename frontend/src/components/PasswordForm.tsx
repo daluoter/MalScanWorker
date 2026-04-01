@@ -25,6 +25,8 @@ export default function PasswordForm({
         try {
             await onSubmit(password)
             setPassword('')
+        } catch {
+            // Error UI is controlled by parent via `error` prop.
         } finally {
             setIsSubmitting(false)
         }
