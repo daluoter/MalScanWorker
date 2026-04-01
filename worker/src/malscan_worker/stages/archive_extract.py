@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 from malscan.config import get_settings
 
+from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
@@ -105,7 +106,10 @@ class ArchiveExtractStage(Stage):
                 max_total_size=max_total_size,
                 max_single_size=max_single_size,
                 max_expansion_ratio=max_expansion_ratio,
+                archive_password=ctx.archive_password,
             )
+        except (ArchivePasswordRequiredError, ArchiveWrongPasswordError):
+            raise
         except Exception as e:
             log.error("archive_extraction_failed", job_id=ctx.job_id, error=str(e), exc_info=True)
             return self._build_result(started_at, "failed", {"error": f"Extraction failed: {e!s}"})
@@ -333,6 +337,8 @@ class ArchiveExtractStage(Stage):
         extracted_files: list[tuple[str, str, int]] = []
         total_extracted_size = 0
         base_dir_abs = os.path.abspath(str(extract_dir))
+        archive_password: str | None = limits.get("archive_password")
+        password_bytes = archive_password.encode() if archive_password else None
 
         with zipfile.ZipFile(file_path, "r") as zf:
             for i, info in enumerate(zf.infolist()):
@@ -340,6 +346,10 @@ class ArchiveExtractStage(Stage):
                     break
                 if info.is_dir():
                     continue
+
+                is_encrypted = bool(getattr(info, "flag_bits", 0) & 0x1)
+                if is_encrypted and not password_bytes:
+                    raise ArchivePasswordRequiredError("zip")
 
                 # Path traversal defense
                 target_path = os.path.join(base_dir_abs, info.filename)
@@ -354,7 +364,15 @@ class ArchiveExtractStage(Stage):
                     return res
 
                 total_extracted_size += info.file_size
-                extracted_path = zf.extract(info, path=base_dir_abs)
+                try:
+                    extracted_path = zf.extract(info, path=base_dir_abs, pwd=password_bytes)
+                except RuntimeError as exc:
+                    msg = str(exc).lower()
+                    if "bad password" in msg or "wrong password" in msg:
+                        raise ArchiveWrongPasswordError("zip") from exc
+                    if "password required" in msg or "encrypted" in msg:
+                        raise ArchivePasswordRequiredError("zip") from exc
+                    raise
                 extracted_files.append((extracted_path, info.filename, info.file_size))
 
         return {"files": extracted_files}

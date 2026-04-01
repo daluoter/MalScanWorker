@@ -1,5 +1,6 @@
 """Pytest configuration and fixtures for worker tests."""
 
+import os
 import uuid
 from typing import Generator
 from unittest.mock import AsyncMock, MagicMock
@@ -7,6 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from malscan_worker.stages.base import StageContext
 from sqlalchemy.ext.asyncio import AsyncSession
+
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("MINIO_ENDPOINT", "localhost:9000")
+os.environ.setdefault("MINIO_ACCESS_KEY", "test")
+os.environ.setdefault("MINIO_SECRET_KEY", "test")
+os.environ.setdefault("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 
 @pytest.fixture
