@@ -18,7 +18,13 @@ from malscan.config import get_settings
 from malscan.db import get_db, get_session_factory
 from malscan.models import File, Job, JobStatus
 from malscan.queue import publish_job
-from malscan.schemas.requests import JobStatusResponse, ReportResponse, UploadResponse
+from malscan.schemas.requests import (
+    JobStatusResponse,
+    PasswordSubmitRequest,
+    PasswordSubmitResponse,
+    ReportResponse,
+    UploadResponse,
+)
 from malscan.storage import upload_file_path as upload_to_minio
 
 router = APIRouter()
@@ -334,6 +340,59 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
         total_sub=job.total_sub,
         completed_sub=job.completed_sub,
         malicious_sub=job.malicious_sub,
+    )
+
+
+@router.post("/jobs/{job_id}/password", response_model=PasswordSubmitResponse)
+async def submit_job_password(
+    job_id: str,
+    payload: PasswordSubmitRequest,
+    db: AsyncSession = Depends(get_db),
+) -> PasswordSubmitResponse:
+    """Submit password for a password-protected archive job and requeue it."""
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid job_id format") from None
+
+    stmt = select(Job).options(joinedload(Job.file)).where(Job.id == job_uuid)
+    result = await db.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.PASSWORD_REQUIRED.value:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job not in password_required status. Current status: {job.status}",
+        )
+
+    if job.password_attempts >= 3:
+        raise HTTPException(status_code=409, detail="Password attempts exhausted")
+
+    if not job.file:
+        raise HTTPException(status_code=500, detail="Job file metadata not found")
+
+    await publish_job(
+        {
+            "job_id": str(job.id),
+            "file_id": str(job.file.id),
+            "storage_key": job.file.sha256,
+            "sha256": job.file.sha256,
+            "original_filename": job.file.filename,
+            "archive_password": payload.password,
+        }
+    )
+
+    job.status = JobStatus.QUEUED.value
+    job.current_stage = None
+    job.error_message = None
+    await db.commit()
+
+    return PasswordSubmitResponse(
+        attempts_used=job.password_attempts,
+        attempts_remaining=max(0, 3 - job.password_attempts),
     )
 
 
