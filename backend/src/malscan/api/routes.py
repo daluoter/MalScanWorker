@@ -355,7 +355,7 @@ async def submit_job_password(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
-    stmt = select(Job).options(joinedload(Job.file)).where(Job.id == job_uuid).with_for_update()
+    stmt = select(Job).where(Job.id == job_uuid).with_for_update()
     result = await db.execute(stmt)
     job = result.scalar_one_or_none()
 
@@ -371,7 +371,11 @@ async def submit_job_password(
     if job.password_attempts >= 3:
         raise HTTPException(status_code=409, detail="Password attempts exhausted")
 
-    if not job.file:
+    file_stmt = select(File).where(File.id == job.file_id)
+    file_result = await db.execute(file_stmt)
+    file_obj = file_result.scalar_one_or_none()
+
+    if not file_obj:
         raise HTTPException(status_code=500, detail="Job file metadata not found")
 
     attempts_used = job.password_attempts
@@ -381,10 +385,10 @@ async def submit_job_password(
         await publish_job(
             {
                 "job_id": str(job.id),
-                "file_id": str(job.file.id),
-                "storage_key": job.file.sha256,
-                "sha256": job.file.sha256,
-                "original_filename": job.file.filename,
+                "file_id": str(file_obj.id),
+                "storage_key": file_obj.sha256,
+                "sha256": file_obj.sha256,
+                "original_filename": file_obj.filename,
                 "archive_password": payload.password,
             }
         )
