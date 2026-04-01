@@ -78,3 +78,6 @@ coverage/
 
 # Claude
 everything-claude-code/
+
+# Git worktrees
+.worktrees/
