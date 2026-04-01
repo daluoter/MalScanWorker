@@ -20,6 +20,7 @@ class StageContext:
     sha256: str
     original_filename: str
     file_path: Path | None
+    archive_password: str | None = None
     previous_results: list["StageResult"] = field(default_factory=list)
     job: Job | None = field(default=None)
     db: AsyncSession | None = field(default=None)

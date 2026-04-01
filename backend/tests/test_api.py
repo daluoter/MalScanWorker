@@ -1,6 +1,8 @@
 """Integration tests for API endpoints."""
 
+import json
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from fastapi.testclient import TestClient
@@ -105,6 +107,7 @@ def test_get_job_status_success(client: TestClient, mock_db_session: AsyncMock):
     mock_job.total_sub = 0
     mock_job.completed_sub = 0
     mock_job.malicious_sub = 0
+    mock_job.password_attempts = 2
     mock_job.updated_at = MagicMock()
 
     # Configure mock db session
@@ -120,6 +123,64 @@ def test_get_job_status_success(client: TestClient, mock_db_session: AsyncMock):
     assert data["status"] == "scanning"
     assert data["progress"]["current_stage"] == "yara"
     assert data["progress"]["percent"] == 40
+    assert data["password_attempts"] == 2
+    assert data["password_attempts_remaining"] == 1
+
+
+def test_stream_job_status_includes_password_attempt_counters(client: TestClient, mocker):
+    """Test SSE payload includes password attempt counters from job state."""
+    job_id = uuid.uuid4()
+
+    existing_job = MagicMock()
+    existing_job.id = job_id
+
+    stream_job = MagicMock()
+    stream_job.id = job_id
+    stream_job.parent_job_id = None
+    stream_job.depth = 0
+    stream_job.status = JobStatus.DONE.value
+    stream_job.current_stage = "archive_extract"
+    stream_job.stages_done = 3
+    stream_job.stages_total = 5
+    stream_job.updated_at = datetime.now(timezone.utc)
+    stream_job.error_message = None
+    stream_job.total_sub = 0
+    stream_job.completed_sub = 0
+    stream_job.malicious_sub = 0
+    stream_job.password_attempts = 2
+
+    existence_result = MagicMock()
+    existence_result.scalar_one_or_none.return_value = existing_job
+    stream_result = MagicMock()
+    stream_result.scalar_one_or_none.return_value = stream_job
+
+    existence_session = AsyncMock()
+    existence_session.execute.return_value = existence_result
+    stream_session = AsyncMock()
+    stream_session.execute.return_value = stream_result
+
+    class _SessionContext:
+        def __init__(self, session):
+            self._session = session
+
+        async def __aenter__(self):
+            return self._session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    factory = MagicMock(
+        side_effect=[_SessionContext(existence_session), _SessionContext(stream_session)]
+    )
+    mocker.patch("malscan.api.routes.get_session_factory", return_value=factory)
+
+    with client.stream("GET", f"/api/v1/jobs/{job_id}/stream") as response:
+        assert response.status_code == 200
+        data_line = next(line for line in response.iter_lines() if line.startswith("data: "))
+
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["password_attempts"] == 2
+    assert payload["password_attempts_remaining"] == 1
 
 
 def test_get_job_status_not_found(client: TestClient, mock_db_session: AsyncMock):
@@ -143,6 +204,7 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
     mock_job = MagicMock()
     mock_job.id = job_id
     mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
     mock_job.result = {
         "job_id": str(job_id),
         "file": {
@@ -176,7 +238,7 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
 
     # Configure mock db session
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = mock_job
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
     mock_db_session.execute.return_value = mock_result
 
     response = client.get(f"/api/v1/reports/{job_id}")

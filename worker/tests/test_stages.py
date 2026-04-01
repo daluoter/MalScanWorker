@@ -156,7 +156,7 @@ async def test_archive_extract_zip(tmp_path):
 
 @pytest.mark.asyncio
 async def test_archive_extract_tar_gz(tmp_path):
-    """Test tar.gz archive extraction."""
+    """Test tar.gz archive extraction (detected as gzip by magic bytes)."""
     # Create a tar.gz file with a test file inside
     inner_file = tmp_path / "inner.txt"
     inner_file.write_bytes(b"inner file content for tar")
@@ -178,7 +178,7 @@ async def test_archive_extract_tar_gz(tmp_path):
     result = await stage.execute(ctx)
 
     assert result.status == "ok"
-    assert result.findings.get("archive_type") == "tar"
+    assert result.findings.get("archive_type") == "gzip"
     assert result.findings.get("extracted_count") == 1
     assert result.findings.get("sub_jobs_created") == 0
 

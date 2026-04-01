@@ -15,9 +15,15 @@ from tenacity import (
 )
 
 from malscan_worker.config import get_settings
-from malscan_worker.db import update_job_status
+from malscan_worker.db import (
+    increment_password_attempts,
+    update_job_result_strict,
+    update_job_status,
+)
+from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.metrics import job_total, worker_active_jobs
 from malscan_worker.pipeline import run_pipeline
+from malscan_worker.reporting import build_password_attempts_exhausted_report
 
 log = structlog.get_logger()
 settings = get_settings()
@@ -102,6 +108,52 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
 
             # Acknowledge successful processing
             await message.ack()
+
+        except ArchivePasswordRequiredError:
+            if job_id:
+                await update_job_status(
+                    job_id,
+                    "password_required",
+                    error_message=(
+                        "Archive is password-protected. " "Please provide a password to continue."
+                    ),
+                )
+            await message.ack()
+
+        except ArchiveWrongPasswordError:
+            try:
+                attempts = await increment_password_attempts(job_id) if job_id else 0
+
+                if job_id and attempts < 3:
+                    await update_job_status(
+                        job_id,
+                        "password_required",
+                        error_message="Wrong archive password. Please try again.",
+                    )
+                elif job_id and attempts >= 3:
+                    report_payload = build_password_attempts_exhausted_report(body)
+                    await update_job_result_strict(job_id, report_payload)
+                    await update_job_status(job_id, "done")
+
+                await message.ack()
+            except Exception as e:
+                log.error(
+                    "password_retry_flow_failed",
+                    job_id=job_id,
+                    file_id=file_id,
+                    error=str(e),
+                    retry_count=retry_count,
+                )
+                if retry_count < MAX_MESSAGE_RETRIES:
+                    await message.reject(requeue=True)
+                else:
+                    if job_id:
+                        await update_job_status(
+                            job_id,
+                            "failed",
+                            error_message=f"Max retries exceeded: {e}",
+                        )
+                    await message.reject(requeue=False)
 
         except Exception as e:
             log.error(

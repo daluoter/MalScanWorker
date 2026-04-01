@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class UploadResponse(BaseModel):
@@ -31,7 +31,9 @@ class JobStatusResponse(BaseModel):
     job_id: str
     parent_job_id: str | None = None
     depth: int = 0
-    status: Literal["queued", "scanning", "done", "failed"]
+    status: Literal["queued", "scanning", "password_required", "done", "failed"]
+    password_attempts: int
+    password_attempts_remaining: int
     progress: JobProgress
     updated_at: datetime
     error_message: str | None
@@ -98,6 +100,7 @@ class ArchiveExtractResult(BaseModel):
     total_extracted_bytes: int = 0
     malicious: bool = False
     reason: str | None = None
+    extraction_failed: bool | None = None
 
 
 class SandboxBehavior(BaseModel):
@@ -185,3 +188,19 @@ class ApiErrorResponse(BaseModel):
     """Wrapper for API errors."""
 
     error: ApiError
+
+
+class PasswordSubmitRequest(BaseModel):
+    """Request for POST /jobs/{job_id}/password."""
+
+    password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordSubmitResponse(BaseModel):
+    """Response for POST /jobs/{job_id}/password."""
+
+    job_id: str
+    status: Literal["queued", "password_required"]
+    message: str
+    attempts_used: int
+    attempts_remaining: int

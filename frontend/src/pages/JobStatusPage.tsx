@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, Link, useLocation } from 'react-router-dom'
 import { apiClient, JobStatus } from '../api/client'
+import PasswordForm from '../components/PasswordForm'
+import { STATUS_COLORS, STATUS_LABELS } from '../constants/status'
 
 interface LocationState {
     fileName?: string
@@ -14,9 +16,14 @@ export default function JobStatusPage() {
     const fileInfo = (location.state as LocationState) || {}
     const [job, setJob] = useState<JobStatus | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [passwordSubmitError, setPasswordSubmitError] = useState<string | null>(null)
+    const previousStatusRef = useRef<JobStatus['status'] | null>(null)
 
     useEffect(() => {
         if (!jobId) return
+
+        setPasswordSubmitError(null)
+        previousStatusRef.current = null
 
         const url = apiClient.getJobStreamUrl(jobId)
         const es = new EventSource(url)
@@ -53,12 +60,14 @@ export default function JobStatusPage() {
         }
     }, [jobId, navigate])
 
-    const statusLabels: Record<string, string> = {
-        queued: '排隊中',
-        scanning: '分析中',
-        done: '完成',
-        failed: '失敗',
-    }
+    useEffect(() => {
+        if (!job) return
+
+        if (previousStatusRef.current !== job.status) {
+            setPasswordSubmitError(null)
+            previousStatusRef.current = job.status
+        }
+    }, [job])
 
     const stageLabels: Record<string, string> = {
         'file-type': 'FILE_TYPE_DETECT',
@@ -97,11 +106,17 @@ export default function JobStatusPage() {
         )
     }
 
-    const statusColors: Record<string, string> = {
-        queued: 'text-slate-400',
-        scanning: 'text-neon-cyan',
-        done: 'text-matrix-green',
-        failed: 'text-alert-red',
+    const handlePasswordSubmit = async (password: string) => {
+        if (!jobId) return
+
+        setPasswordSubmitError(null)
+        try {
+            await apiClient.submitArchivePassword(jobId, { password })
+        } catch (submitError) {
+            const message = submitError instanceof Error ? submitError.message : '提交密碼失敗，請再試一次'
+            setPasswordSubmitError(message)
+            throw submitError
+        }
     }
 
     return (
@@ -142,11 +157,22 @@ export default function JobStatusPage() {
                     <div className="flex items-center gap-2">
                         <span className="text-neon-purple">$</span>
                         <span className="text-slate-400">STATUS:</span>
-                        <span className={`font-bold ${statusColors[job.status]}`}>
-                            {statusLabels[job.status] || job.status}
+                        <span className={`font-bold ${STATUS_COLORS[job.status]}`}>
+                            {STATUS_LABELS[job.status] || job.status}
                         </span>
                     </div>
                 </div>
+
+                {job.status === 'password_required' && (
+                    <div className="mt-6">
+                        <PasswordForm
+                            attemptsUsed={job.password_attempts}
+                            attemptsRemaining={job.password_attempts_remaining}
+                            onSubmit={handlePasswordSubmit}
+                            error={passwordSubmitError ?? job.error_message ?? null}
+                        />
+                    </div>
+                )}
 
                 {/* HUD Progress Bar */}
                 <div className="mt-6">
