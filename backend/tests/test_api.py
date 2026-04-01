@@ -204,6 +204,7 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
     mock_job = MagicMock()
     mock_job.id = job_id
     mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
     mock_job.result = {
         "job_id": str(job_id),
         "file": {
@@ -237,7 +238,7 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
 
     # Configure mock db session
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = mock_job
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
     mock_db_session.execute.return_value = mock_result
 
     response = client.get(f"/api/v1/reports/{job_id}")

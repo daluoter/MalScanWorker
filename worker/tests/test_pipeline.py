@@ -1,5 +1,6 @@
 """Unit tests for the analysis pipeline."""
 
+import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
@@ -61,6 +62,11 @@ async def test_run_pipeline_success(mocker, tmp_path):
     mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
+    mocker.patch(
+        "malscan_worker.pipeline.get_job_for_context",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
     mocker.patch("malscan_worker.pipeline.stage_latency")
 
     # Replace STAGES with mock stages
@@ -68,9 +74,11 @@ async def test_run_pipeline_success(mocker, tmp_path):
     mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
     mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
+    job_id = str(uuid.uuid4())
+    file_id = str(uuid.uuid4())
     job_data = {
-        "job_id": "test-job-id",
-        "file_id": "test-file-id",
+        "job_id": job_id,
+        "file_id": file_id,
         "storage_key": "test-key",
         "sha256": "test-sha256",
         "original_filename": "test.txt",
@@ -78,13 +86,13 @@ async def test_run_pipeline_success(mocker, tmp_path):
 
     result = await run_pipeline(job_data)
 
-    assert result["job_id"] == "test-job-id"
+    assert result["job_id"] == job_id
     assert len(result["stages"]) == 2
 
 
 @pytest.mark.asyncio
 async def test_run_pipeline_stage_failure(mocker, tmp_path):
-    """Test pipeline handling of stage failure."""
+    """Test pipeline continues and records failed stage."""
     from malscan_worker.pipeline import run_pipeline
 
     # Create temp file
@@ -100,6 +108,11 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
     mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
     mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
+    mocker.patch(
+        "malscan_worker.pipeline.get_job_for_context",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
     mocker.patch("malscan_worker.pipeline.stage_latency")
 
     # Mock STAGES (second stage fails)
@@ -107,14 +120,20 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
     mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
     mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
+    job_id = str(uuid.uuid4())
+    file_id = str(uuid.uuid4())
     job_data = {
-        "job_id": "test-job-id",
-        "file_id": "test-file-id",
+        "job_id": job_id,
+        "file_id": file_id,
         "storage_key": "test-key",
         "sha256": "test-sha256",
         "original_filename": "test.txt",
     }
 
-    # Pipeline should raise RuntimeError on failure
-    with pytest.raises(RuntimeError, match="Stage stage2 failed"):
-        await run_pipeline(job_data)
+    result = await run_pipeline(job_data)
+
+    assert result["job_id"] == job_id
+    assert any(
+        stage["stage_name"] == "stage2" and stage["status"] == "failed"
+        for stage in result["stages"]
+    )
