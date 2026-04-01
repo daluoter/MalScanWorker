@@ -198,5 +198,8 @@ class PasswordSubmitRequest(BaseModel):
 class PasswordSubmitResponse(BaseModel):
     """Response for POST /jobs/{job_id}/password."""
 
+    job_id: str
+    status: Literal["queued", "password_required"]
+    message: str
     attempts_used: int
     attempts_remaining: int

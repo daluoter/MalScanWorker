@@ -374,6 +374,15 @@ async def submit_job_password(
     if not job.file:
         raise HTTPException(status_code=500, detail="Job file metadata not found")
 
+    attempts_used = job.password_attempts
+    attempts_remaining = max(0, 3 - job.password_attempts)
+    previous_stage = job.current_stage
+
+    job.status = JobStatus.QUEUED.value
+    job.current_stage = None
+    job.error_message = None
+    await db.commit()
+
     try:
         await publish_job(
             {
@@ -387,19 +396,27 @@ async def submit_job_password(
         )
     except Exception as e:
         log.error("password_submit_publish_failed", job_id=str(job.id), error=str(e))
+
+        restore_stmt = select(Job).where(Job.id == job_uuid).with_for_update()
+        restore_result = await db.execute(restore_stmt)
+        restore_job = restore_result.scalar_one_or_none()
+        if restore_job and restore_job.status == JobStatus.QUEUED.value:
+            restore_job.status = JobStatus.PASSWORD_REQUIRED.value
+            restore_job.current_stage = previous_stage
+            restore_job.error_message = "Failed to submit password retry job. Please retry."
+            await db.commit()
+
         raise HTTPException(
             status_code=503,
             detail="Failed to submit password retry job",
         ) from e
 
-    job.status = JobStatus.QUEUED.value
-    job.current_stage = None
-    job.error_message = None
-    await db.commit()
-
     return PasswordSubmitResponse(
-        attempts_used=job.password_attempts,
-        attempts_remaining=max(0, 3 - job.password_attempts),
+        job_id=str(job.id),
+        status=JobStatus.QUEUED.value,
+        message="Password accepted. Job requeued for analysis.",
+        attempts_used=attempts_used,
+        attempts_remaining=attempts_remaining,
     )
 
 
