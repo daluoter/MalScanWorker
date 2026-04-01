@@ -15,7 +15,7 @@ export interface JobProgress {
 
 export interface JobStatus {
     job_id: string
-    status: 'queued' | 'scanning' | 'done' | 'failed'
+    status: 'queued' | 'scanning' | 'password_required' | 'done' | 'failed'
     progress: JobProgress
     updated_at: string
     error_message: string | null

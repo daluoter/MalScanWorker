@@ -77,6 +77,7 @@ class ApiClient {
             try {
                 const errorData = await response.json()
                 errorMessage = errorData?.detail?.error?.message ||
+                               errorData?.detail?.message ||
                                errorData?.error?.message ||
                                errorData?.detail ||
                                errorMessage
