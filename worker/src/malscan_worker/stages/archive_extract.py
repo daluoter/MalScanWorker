@@ -397,6 +397,8 @@ class ArchiveExtractStage(Stage):
                 msg = str(exc).lower()
                 if "wrong password" in msg or "bad password" in msg or "incorrect password" in msg:
                     raise ArchiveWrongPasswordError("7z") from exc
+                if "corrupt input data" in msg and archive_password:
+                    raise ArchiveWrongPasswordError("7z") from exc
                 if "password required" in msg or "encrypted" in msg:
                     raise ArchivePasswordRequiredError("7z") from exc
 

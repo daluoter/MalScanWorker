@@ -332,6 +332,38 @@ def test_extract_7z_wrong_password_raises_wrong_password(monkeypatch, tmp_path):
     assert exc.value.args[0] == "7z"
 
 
+def test_extract_7z_corrupt_input_maps_to_wrong_password(monkeypatch, tmp_path):
+    stage = ArchiveExtractStage()
+
+    class _FakePy7zr:
+        pass
+
+    fake_py7zr = _FakePy7zr()
+    fake_py7zr.SevenZipFile = lambda file_path, mode="r", password=None: _Fake7zFile(
+        file_path,
+        mode,
+        password,
+        needs_password=True,
+        extract_error=RuntimeError("Corrupt input data"),
+    )
+
+    monkeypatch.setattr("malscan_worker.stages.archive_extract.HAS_PY7ZR", True)
+    monkeypatch.setattr("malscan_worker.stages.archive_extract.py7zr", fake_py7zr)
+
+    with pytest.raises(ArchiveWrongPasswordError) as exc:
+        stage._extract_7z(
+            file_path=tmp_path / "archive.7z",
+            extract_dir=tmp_path / "out",
+            max_files=10,
+            max_total_size=1024,
+            max_single_size=1024,
+            max_expansion_ratio=10,
+            archive_password="bad-pass",
+        )
+
+    assert exc.value.args[0] == "7z"
+
+
 def test_extract_rar_encrypted_without_password_raises_required(monkeypatch, tmp_path):
     stage = ArchiveExtractStage()
     fake_infos = [_FakeRarInfo(filename="a.txt", file_size=10, needs_password=True)]
