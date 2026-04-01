@@ -124,13 +124,14 @@ class ApiClient {
             try {
                 const errorData = await response.json()
                 errorMessage = errorData?.detail?.error?.message ||
+                               errorData?.detail?.message ||
                                errorData?.error?.message ||
                                errorData?.detail ||
                                errorMessage
             } catch {
                 errorMessage = response.statusText || errorMessage
             }
-            throw new Error(errorMessage)
+            throw new Error(String(errorMessage))
         }
 
         return response.json()
