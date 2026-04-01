@@ -31,7 +31,9 @@ class JobStatusResponse(BaseModel):
     job_id: str
     parent_job_id: str | None = None
     depth: int = 0
-    status: Literal["queued", "scanning", "done", "failed"]
+    status: Literal["queued", "scanning", "password_required", "done", "failed"]
+    password_attempts: int = 0
+    password_attempts_remaining: int = 3
     progress: JobProgress
     updated_at: datetime
     error_message: str | None

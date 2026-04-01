@@ -41,6 +41,7 @@ def test_job_model_creation():
     assert job.stages_total == 5
     assert job.stages_done == 0
     assert job.current_stage is None
+    assert Job.__table__.c.password_attempts.default.arg == 0
     assert job.error_message is None
     assert job.result is None
 
@@ -49,5 +50,6 @@ def test_job_status_enum():
     """Test JobStatus enum values."""
     assert JobStatus.QUEUED.value == "queued"
     assert JobStatus.SCANNING.value == "scanning"
+    assert JobStatus.PASSWORD_REQUIRED.value == "password_required"
     assert JobStatus.DONE.value == "done"
     assert JobStatus.FAILED.value == "failed"
