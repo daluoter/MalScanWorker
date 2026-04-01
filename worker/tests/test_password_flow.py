@@ -271,3 +271,54 @@ async def test_consumer_exhausted_report_write_failure_not_done_and_requeues(moc
         )
     message.ack.assert_not_awaited()
     message.reject.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_consumer_exhausted_report_write_failure_goes_dlq_after_max_retries(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+            "file_id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+        },
+        headers={"x-death": [{"count": 3}]},
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        return_value=3,
+    )
+    mocker.patch(
+        "malscan_worker.consumer.update_job_result_strict",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("write failed"),
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
+    )
+
+    await consumer.process_message(message)
+
+    message.ack.assert_not_awaited()
+    message.reject.assert_awaited_once_with(requeue=False)
+
+    failed_call_found = False
+    for call in update_status.await_args_list:
+        if (
+            call.args[0] == "dddddddd-dddd-dddd-dddd-dddddddddddd"
+            and call.args[1] == "failed"
+            and "Max retries exceeded" in call.kwargs.get("error_message", "")
+        ):
+            failed_call_found = True
+        assert not (
+            call.args[0] == "dddddddd-dddd-dddd-dddd-dddddddddddd" and call.args[1] == "done"
+        )
+
+    assert failed_call_found
