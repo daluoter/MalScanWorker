@@ -190,6 +190,32 @@ async def update_job_result(job_id: str, result: dict[str, Any]) -> None:
             await session.rollback()
 
 
+async def update_job_result_strict(job_id: str, result: dict[str, Any]) -> None:
+    """Store analysis result and raise on failure."""
+    async with AsyncSession(_engine) as session:
+        import json
+
+        from sqlalchemy import text
+
+        stmt = text(
+            """
+            UPDATE jobs
+            SET result = :result, updated_at = :updated_at
+            WHERE id = :job_id
+            """
+        )
+
+        await session.execute(
+            stmt,
+            {
+                "job_id": UUID(job_id),
+                "result": json.dumps(result),
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+        await session.commit()
+
+
 async def increment_password_attempts(job_id: str) -> int:
     """Atomically increment password attempts and return current count."""
     async with AsyncSession(_engine) as session:

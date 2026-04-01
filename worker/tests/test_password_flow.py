@@ -102,7 +102,7 @@ async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack
         "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
     )
     update_result = mocker.patch(
-        "malscan_worker.consumer.update_job_result", new_callable=AsyncMock
+        "malscan_worker.consumer.update_job_result_strict", new_callable=AsyncMock
     )
 
     await consumer.process_message(message)
@@ -149,7 +149,7 @@ async def test_consumer_wrong_password_under_limit_sets_password_required_and_ac
         "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
     )
     update_result = mocker.patch(
-        "malscan_worker.consumer.update_job_result", new_callable=AsyncMock
+        "malscan_worker.consumer.update_job_result_strict", new_callable=AsyncMock
     )
 
     await consumer.process_message(message)
@@ -189,7 +189,7 @@ async def test_consumer_wrong_password_over_limit_treated_as_exhausted(mocker):
         "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
     )
     update_result = mocker.patch(
-        "malscan_worker.consumer.update_job_result", new_callable=AsyncMock
+        "malscan_worker.consumer.update_job_result_strict", new_callable=AsyncMock
     )
 
     await consumer.process_message(message)
@@ -224,5 +224,50 @@ async def test_consumer_wrong_password_increment_failure_rejects_for_retry(mocke
 
     await consumer.process_message(message)
 
+    message.ack.assert_not_awaited()
+    message.reject.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_consumer_exhausted_report_write_failure_not_done_and_requeues(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "file_id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        return_value=3,
+    )
+    mocker.patch(
+        "malscan_worker.consumer.update_job_result_strict",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("write failed"),
+        create=True,
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
+    )
+
+    await consumer.process_message(message)
+
+    update_status.assert_any_await(
+        "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        "scanning",
+    )
+    for call in update_status.await_args_list:
+        assert not (
+            call.args[0] == "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" and call.args[1] == "done"
+        )
     message.ack.assert_not_awaited()
     message.reject.assert_awaited_once_with(requeue=True)

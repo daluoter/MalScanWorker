@@ -17,7 +17,7 @@ from tenacity import (
 from malscan_worker.config import get_settings
 from malscan_worker.db import (
     increment_password_attempts,
-    update_job_result,
+    update_job_result_strict,
     update_job_status,
 )
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
@@ -132,7 +132,7 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
                     )
                 elif job_id and attempts >= 3:
                     report_payload = build_password_attempts_exhausted_report(body)
-                    await update_job_result(job_id, report_payload)
+                    await update_job_result_strict(job_id, report_payload)
                     await update_job_status(job_id, "done")
 
                 await message.ack()
