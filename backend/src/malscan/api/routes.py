@@ -321,6 +321,8 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
         parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
         depth=job.depth,
         status=job.status,
+        password_attempts=job.password_attempts,
+        password_attempts_remaining=max(0, 3 - job.password_attempts),
         progress={
             "current_stage": job.current_stage,
             "stages_done": job.stages_done,
@@ -393,6 +395,8 @@ async def stream_job_status(job_id: str, request: Request):
                             parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
                             depth=job.depth,
                             status=job.status,
+                            password_attempts=job.password_attempts,
+                            password_attempts_remaining=max(0, 3 - job.password_attempts),
                             progress={
                                 "current_stage": job.current_stage,
                                 "stages_done": job.stages_done,
