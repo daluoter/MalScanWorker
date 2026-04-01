@@ -355,7 +355,7 @@ async def submit_job_password(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job_id format") from None
 
-    stmt = select(Job).options(joinedload(Job.file)).where(Job.id == job_uuid)
+    stmt = select(Job).options(joinedload(Job.file)).where(Job.id == job_uuid).with_for_update()
     result = await db.execute(stmt)
     job = result.scalar_one_or_none()
 
@@ -374,16 +374,23 @@ async def submit_job_password(
     if not job.file:
         raise HTTPException(status_code=500, detail="Job file metadata not found")
 
-    await publish_job(
-        {
-            "job_id": str(job.id),
-            "file_id": str(job.file.id),
-            "storage_key": job.file.sha256,
-            "sha256": job.file.sha256,
-            "original_filename": job.file.filename,
-            "archive_password": payload.password,
-        }
-    )
+    try:
+        await publish_job(
+            {
+                "job_id": str(job.id),
+                "file_id": str(job.file.id),
+                "storage_key": job.file.sha256,
+                "sha256": job.file.sha256,
+                "original_filename": job.file.filename,
+                "archive_password": payload.password,
+            }
+        )
+    except Exception as e:
+        log.error("password_submit_publish_failed", job_id=str(job.id), error=str(e))
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to submit password retry job",
+        ) from e
 
     job.status = JobStatus.QUEUED.value
     job.current_stage = None
