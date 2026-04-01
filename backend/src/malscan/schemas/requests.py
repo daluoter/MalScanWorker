@@ -100,6 +100,7 @@ class ArchiveExtractResult(BaseModel):
     total_extracted_bytes: int = 0
     malicious: bool = False
     reason: str | None = None
+    extraction_failed: bool | None = None
 
 
 class SandboxBehavior(BaseModel):

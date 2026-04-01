@@ -162,6 +162,18 @@ export default function ReportPage() {
                 </div>
             )}
 
+            {/* Archive Extraction Failure Banner */}
+            {report.results.archive_extract?.extraction_failed && (
+                <div className="glass-card p-6 mb-4 border-l-4 border-alert-red bg-alert-red/10">
+                    <h2 className="text-lg font-bold mb-2 text-alert-red flex items-center gap-2">
+                        <span>❌ 解壓縮失敗</span>
+                    </h2>
+                    <p className="text-sm text-slate-200 font-mono">
+                        密碼重試已用盡，封存檔案無法解壓縮。此報告僅包含外層檔案分析結果。
+                    </p>
+                </div>
+            )}
+
             {/* Child Jobs / Extracted Files List */}
             {report.child_jobs.length > 0 && (
                 <div className="glass-card p-6 mb-4">

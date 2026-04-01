@@ -86,6 +86,7 @@ export interface Report {
             total_extracted_bytes: number
             malicious: boolean
             reason: string | null
+            extraction_failed?: boolean
         }
     }
     timings: {
