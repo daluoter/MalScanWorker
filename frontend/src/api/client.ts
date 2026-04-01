@@ -1,118 +1,28 @@
+import type {
+    JobStatus,
+    PasswordSubmitRequest,
+    PasswordSubmitResponse,
+    Report,
+    UploadResponse,
+} from './types'
+
+export type {
+    ApiError,
+    AvResult,
+    FileMetadata,
+    HealthResponse,
+    Iocs,
+    JobProgress,
+    JobStatus,
+    PasswordSubmitRequest,
+    PasswordSubmitResponse,
+    Report,
+    StageTiming,
+    UploadResponse,
+    YaraHit,
+} from './types'
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/+$/, '')
-
-export interface UploadResponse {
-    job_id: string
-    file_id: string
-    sha256: string
-    status: string
-    created_at: string
-}
-
-export interface JobProgress {
-    current_stage: string
-    stages_done: number
-    stages_total: number
-    percent: number
-}
-
-export interface JobStatus {
-    job_id: string
-    status: 'queued' | 'scanning' | 'done' | 'failed'
-    progress: JobProgress
-    updated_at: string
-    error_message: string | null
-}
-
-export interface FileMetadata {
-    file_id: string
-    sha256: string
-    mime: string
-    size: number
-    original_filename: string
-}
-
-export interface AvResult {
-    engine: string
-    infected: boolean
-    threat_name: string | null
-}
-
-export interface YaraHit {
-    rule: string
-    namespace: string
-    description: string
-    severity: string
-    author: string
-    tags: string[]
-    strings: string[]
-}
-
-export interface Iocs {
-    urls: string[]
-    domains: string[]
-    ips: string[]
-    hashes: {
-        md5: string
-        sha1: string
-        sha256: string
-    }
-}
-
-export interface StageTiming {
-    name: string
-    status: string
-    duration_ms: number
-}
-
-export interface Report {
-    job_id: string
-    file: FileMetadata
-    verdict: string
-    score: number
-    results: {
-        av_result: AvResult
-        yara_hits: YaraHit[]
-        iocs: Iocs
-        sandbox: {
-            executed: boolean
-            behaviors: Array<{ type: string; path?: string; key?: string }>
-            network_connections: Array<{ dst_ip: string; dst_port: number; protocol: string }>
-            is_mock: boolean
-        }
-        archive_extract?: {
-            archive_type: string | null
-            extracted_count: number
-            sub_jobs_created: number
-            total_extracted_bytes: number
-            malicious: boolean
-            reason: string | null
-        }
-    }
-    timings: {
-        total_ms: number
-        stages: StageTiming[]
-    }
-    child_jobs: Array<{
-        job_id: string
-        filename: string
-        sha256: string
-        status: string
-        verdict: string | null
-    }>
-    created_at: string
-}
-
-export interface ApiError {
-    error: {
-        code: string
-        message: string
-        details?: Record<string, unknown>
-    }
-}
-
-export interface HealthResponse {
-    status: string
-}
 
 class ApiClient {
     public baseUrl: string
@@ -192,6 +102,32 @@ class ApiClient {
                                errorMessage
             } catch {
                 errorMessage = response.statusText
+            }
+            throw new Error(errorMessage)
+        }
+
+        return response.json()
+    }
+
+    async submitArchivePassword(jobId: string, payload: PasswordSubmitRequest): Promise<PasswordSubmitResponse> {
+        const response = await fetch(`${this.baseUrl}/api/v1/jobs/${jobId}/password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        })
+
+        if (!response.ok) {
+            let errorMessage = '提交解壓密碼失敗'
+            try {
+                const errorData = await response.json()
+                errorMessage = errorData?.detail?.error?.message ||
+                               errorData?.error?.message ||
+                               errorData?.detail ||
+                               errorMessage
+            } catch {
+                errorMessage = response.statusText || errorMessage
             }
             throw new Error(errorMessage)
         }
