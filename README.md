@@ -359,12 +359,35 @@ docker compose up -d --build
 
 ---
 
+## 密碼保護壓縮檔分析
+
+當上傳的壓縮檔（ZIP、7z、RAR）需要密碼時，系統會自動暫停分析並提示輸入密碼。
+
+### 支援的加密方式
+- **ZIP:** ZipCrypto / AES-256（WZ_AES）
+- **7z:** AES-256
+- **RAR:** AES-128 / AES-256
+
+### 使用流程
+1. 上傳有密碼的壓縮檔 → 系統自動偵測並進入「需要密碼」狀態
+2. 在工作狀態頁輸入密碼 → 系統重新嘗試解壓並繼續分析
+3. 最多可重試 **3 次**
+   - 密碼正確：正常解壓，分析內部檔案
+   - 3 次皆錯誤：產生最終報告，明確標示「解壓縮失敗」
+
+### 報告可視性
+- 解壓成功：報告顯示解壓縮資訊（檔案數、子任務數、解壓縮大小）
+- 解壓失敗：報告顯示紅色橫幅提示，並附上失敗原因
+
+---
+
 ## API 端點
 
 | 方法 | 路徑 | 處理服務 | 說明 |
 |------|------|----------|------|
 | POST | `/api/v1/files` | Go Ingest Service | 上傳檔案進行分析 |
 | GET | `/api/v1/jobs/{job_id}` | FastAPI | 查詢分析狀態 |
+| POST | `/api/v1/jobs/{job_id}/password` | FastAPI | 提交壓縮檔密碼（最多 3 次） |
 | GET | `/api/v1/reports/{job_id}` | FastAPI | 取得分析報告 |
 
 ---
@@ -374,7 +397,7 @@ docker compose up -d --build
 - **前端:** React 18 + TypeScript + Vite
 - **Ingest:** Go 1.25 + chi + pgx + minio-go + amqp091-go（檔案接收層）
 - **後端:** FastAPI + SQLAlchemy + asyncpg
-- **Worker:** Python + clamscan CLI + yara CLI
+- **Worker:** Python + clamscan CLI + yara CLI + pyzipper (AES ZIP) + py7zr + rarfile
 - **反向代理:** Nginx（路由分流至 Ingest / Backend）
 - **佇列:** RabbitMQ
 - **儲存:** MinIO + Supabase PostgreSQL

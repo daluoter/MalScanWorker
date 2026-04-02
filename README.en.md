@@ -359,12 +359,35 @@ docker compose up -d --build
 
 ---
 
+## Password-Protected Archive Analysis
+
+When an uploaded archive (ZIP, 7z, RAR) requires a password, the system automatically pauses analysis and prompts for input.
+
+### Supported Encryption Methods
+- **ZIP:** ZipCrypto / AES-256 (WZ_AES)
+- **7z:** AES-256
+- **RAR:** AES-128 / AES-256
+
+### Workflow
+1. Upload a password-protected archive → system detects it and enters "password required" state
+2. Enter the password on the job status page → system retries extraction and continues analysis
+3. Up to **3** retry attempts allowed
+   - Correct password: extraction succeeds and inner files are analyzed
+   - 3 wrong attempts: final report is generated with an explicit "extraction failed" notice
+
+### Report Visibility
+- Successful extraction: report shows archive extraction info (file count, sub-jobs, decompressed size)
+- Failed extraction: report displays a red banner with the failure reason
+
+---
+
 ## API Endpoints
 
 | Method | Path | Service | Description |
 |--------|------|---------|-------------|
 | POST | `/api/v1/files` | Go Ingest Service | Upload a file for analysis |
 | GET | `/api/v1/jobs/{job_id}` | FastAPI | Query analysis status |
+| POST | `/api/v1/jobs/{job_id}/password` | FastAPI | Submit archive password (max 3 attempts) |
 | GET | `/api/v1/reports/{job_id}` | FastAPI | Retrieve analysis report |
 
 ---
@@ -374,7 +397,7 @@ docker compose up -d --build
 - **Frontend:** React 18 + TypeScript + Vite
 - **Ingest:** Go 1.25 + chi + pgx + minio-go + amqp091-go (file ingestion layer)
 - **Backend:** FastAPI + SQLAlchemy + asyncpg
-- **Worker:** Python + clamscan CLI + yara CLI
+- **Worker:** Python + clamscan CLI + yara CLI + pyzipper (AES ZIP) + py7zr + rarfile
 - **Reverse Proxy:** Nginx (routes requests to Ingest / Backend)
 - **Queue:** RabbitMQ
 - **Storage:** MinIO + Supabase PostgreSQL
