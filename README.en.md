@@ -369,7 +369,7 @@ When an uploaded archive (ZIP, 7z, RAR) requires a password, the system automati
 - **RAR:** AES-128 / AES-256
 
 ### Workflow
-1. Upload a password-protected archive → system detects it and enters "password required" state
+1. Upload a password-protected archive → system detects it and enters the "password required" state (`password_required` job status)
 2. Enter the password on the job status page → system retries extraction and continues analysis
 3. Up to **3** retry attempts allowed
    - Correct password: extraction succeeds and inner files are analyzed
@@ -377,7 +377,7 @@ When an uploaded archive (ZIP, 7z, RAR) requires a password, the system automati
 
 ### Report Visibility
 - Successful extraction: report shows archive extraction info (file count, sub-jobs, decompressed size)
-- Failed extraction: report displays a red banner with the failure reason
+- Failed extraction: report displays a red banner indicating that extraction failed
 
 ---
 
