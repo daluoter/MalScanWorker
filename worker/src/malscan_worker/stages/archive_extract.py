@@ -37,6 +37,13 @@ try:
 except ImportError:
     HAS_RARFILE = False
 
+try:
+    import pyzipper
+
+    HAS_PYZIPPER = True
+except ImportError:
+    HAS_PYZIPPER = False
+
 
 class ArchiveExtractStage(Stage):
     """Extract files from archives and submit them as sub-jobs.
@@ -333,6 +340,31 @@ class ArchiveExtractStage(Stage):
     # Extractor implementations
     # ------------------------------------------------------------------
 
+    def _zip_info_uses_aes(self, info: zipfile.ZipInfo) -> bool:
+        """Return True when a ZIP entry uses WinZip AES encryption."""
+        if getattr(info, "compress_type", None) == 99:
+            return True
+
+        extra = getattr(info, "extra", b"")
+        return b"\x01\x99" in extra
+
+    def _classify_zip_runtime_error(
+        self,
+        exc: Exception,
+        archive_password: str | None,
+    ) -> Exception | None:
+        """Map ZIP runtime errors to archive password domain exceptions."""
+        msg = str(exc).lower()
+        if "bad password" in msg or "wrong password" in msg or "incorrect password" in msg:
+            return ArchiveWrongPasswordError("zip")
+        if "password required" in msg or "encrypted" in msg:
+            if archive_password:
+                return ArchiveWrongPasswordError("zip")
+            return ArchivePasswordRequiredError("zip")
+        if "wz_aes" in msg and archive_password:
+            return ArchiveWrongPasswordError("zip")
+        return None
+
     def _extract_zip(self, file_path: Path, extract_dir: Path, **limits: Any) -> dict[str, Any]:
         extracted_files: list[tuple[str, str, int]] = []
         total_extracted_size = 0
@@ -341,6 +373,48 @@ class ArchiveExtractStage(Stage):
         password_bytes = archive_password.encode() if archive_password else None
 
         with zipfile.ZipFile(file_path, "r") as zf:
+            zip_infos = zf.infolist()
+            has_aes_member = any(
+                self._zip_info_uses_aes(info) for info in zip_infos if not info.is_dir()
+            )
+
+            if has_aes_member and HAS_PYZIPPER:
+                with pyzipper.AESZipFile(file_path, "r") as azf:
+                    for i, info in enumerate(azf.infolist()):
+                        if i >= limits["max_files"]:
+                            break
+                        if info.is_dir():
+                            continue
+
+                        is_encrypted = bool(getattr(info, "flag_bits", 0) & 0x1)
+                        if is_encrypted and not password_bytes:
+                            raise ArchivePasswordRequiredError("zip")
+
+                        target_path = os.path.join(base_dir_abs, info.filename)
+                        if not os.path.abspath(target_path).startswith(base_dir_abs):
+                            continue
+
+                        res = self._check_size_limits(
+                            info.file_size, total_extracted_size, limits, info.filename
+                        )
+                        if res:
+                            return res
+
+                        total_extracted_size += info.file_size
+                        try:
+                            extracted_path = azf.extract(
+                                info, path=base_dir_abs, pwd=password_bytes
+                            )
+                        except RuntimeError as exc:
+                            mapped_error = self._classify_zip_runtime_error(exc, archive_password)
+                            if mapped_error:
+                                raise mapped_error from exc
+                            raise
+
+                        extracted_files.append((extracted_path, info.filename, info.file_size))
+
+                return {"files": extracted_files}
+
             for i, info in enumerate(zf.infolist()):
                 if i >= limits["max_files"]:
                     break
@@ -367,11 +441,9 @@ class ArchiveExtractStage(Stage):
                 try:
                     extracted_path = zf.extract(info, path=base_dir_abs, pwd=password_bytes)
                 except RuntimeError as exc:
-                    msg = str(exc).lower()
-                    if "bad password" in msg or "wrong password" in msg:
-                        raise ArchiveWrongPasswordError("zip") from exc
-                    if "password required" in msg or "encrypted" in msg:
-                        raise ArchivePasswordRequiredError("zip") from exc
+                    mapped_error = self._classify_zip_runtime_error(exc, archive_password)
+                    if mapped_error:
+                        raise mapped_error from exc
                     raise
                 extracted_files.append((extracted_path, info.filename, info.file_size))
 
