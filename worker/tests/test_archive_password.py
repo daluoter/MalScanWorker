@@ -240,7 +240,9 @@ def test_extract_zip_bad_password_raises_wrong_password(monkeypatch, tmp_path):
     assert exc.value.args[0] == "zip"
 
 
-def test_extract_zip_password_required_runtime_error_raises_required(monkeypatch, tmp_path):
+def test_extract_zip_password_required_runtime_error_with_password_raises_wrong(
+    monkeypatch, tmp_path
+):
     stage = ArchiveExtractStage()
     fake_infos = [_FakeZipInfo(filename="a.txt", file_size=10, encrypted=True)]
 
@@ -252,7 +254,7 @@ def test_extract_zip_password_required_runtime_error_raises_required(monkeypatch
         ),
     )
 
-    with pytest.raises(ArchivePasswordRequiredError) as exc:
+    with pytest.raises(ArchiveWrongPasswordError) as exc:
         stage._extract_zip(
             file_path=tmp_path / "archive.zip",
             extract_dir=tmp_path / "out",
@@ -264,6 +266,64 @@ def test_extract_zip_password_required_runtime_error_raises_required(monkeypatch
         )
 
     assert exc.value.args[0] == "zip"
+
+
+def test_extract_zip_aes_wrong_password_raises_wrong_password(tmp_path):
+    import pyzipper
+
+    stage = ArchiveExtractStage()
+    zip_path = tmp_path / "aes-wrong.zip"
+
+    with pyzipper.AESZipFile(
+        zip_path,
+        mode="w",
+        compression=pyzipper.ZIP_DEFLATED,
+        encryption=pyzipper.WZ_AES,
+    ) as zf:
+        zf.setpassword(b"correct-password")
+        zf.writestr("a.txt", "secret content")
+
+    with pytest.raises(ArchiveWrongPasswordError) as exc:
+        stage._extract_zip(
+            file_path=zip_path,
+            extract_dir=tmp_path / "out",
+            max_files=10,
+            max_total_size=1024 * 1024,
+            max_single_size=1024 * 1024,
+            max_expansion_ratio=10,
+            archive_password="wrong-password",
+        )
+
+    assert exc.value.args[0] == "zip"
+
+
+def test_extract_zip_aes_correct_password_extracts(tmp_path):
+    import pyzipper
+
+    stage = ArchiveExtractStage()
+    zip_path = tmp_path / "aes-correct.zip"
+
+    with pyzipper.AESZipFile(
+        zip_path,
+        mode="w",
+        compression=pyzipper.ZIP_DEFLATED,
+        encryption=pyzipper.WZ_AES,
+    ) as zf:
+        zf.setpassword(b"correct-password")
+        zf.writestr("a.txt", "secret content")
+
+    result = stage._extract_zip(
+        file_path=zip_path,
+        extract_dir=tmp_path / "out",
+        max_files=10,
+        max_total_size=1024 * 1024,
+        max_single_size=1024 * 1024,
+        max_expansion_ratio=10,
+        archive_password="correct-password",
+    )
+
+    assert len(result["files"]) == 1
+    assert result["files"][0][1] == "a.txt"
 
 
 def test_extract_7z_encrypted_without_password_raises_required(monkeypatch, tmp_path):
