@@ -21,6 +21,7 @@ from typing import Any
 import structlog
 from malscan.config import get_settings
 
+from malscan_worker.db import create_artifact
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
@@ -997,64 +998,94 @@ class DocumentAnalysisStage(Stage):
         ctx: StageContext,
         artifacts: list[dict[str, Any]],
     ) -> int:
-        """Upload extracted artifacts to storage and create sub-jobs."""
+        """Submit extracted artifacts as sub-jobs with artifact records."""
         settings = get_settings()
         max_depth = getattr(settings, "max_job_depth", 3)
-        current_depth = getattr(ctx.job, "depth", 0)
-        if current_depth >= max_depth:
-            log.info("doc_analysis_skip_subjobs_max_depth", job_id=ctx.job_id, depth=current_depth)
+        if ctx.job and ctx.job.depth >= max_depth:
+            log.info("doc_analysis_max_depth_reached", depth=ctx.job.depth)
             return 0
 
-        parent_job_id = str(ctx.job.id)
-        parent_job_depth = ctx.job.depth
+        parent_job_id = str(ctx.job.id) if ctx.job else ctx.job_id
+        parent_job_depth = ctx.job.depth if ctx.job else 0
 
-        count = 0
-        try:
-            submitter = await InternalJobSubmitter.get_instance()
-        except Exception as exc:
-            log.error(
-                "doc_analysis_submitter_init_failed",
+        # Create root artifact if needed (depth=0 with embedded objects)
+        root_artifact_id = ctx.root_artifact_id
+        parent_artifact_id = ctx.artifact_id
+
+        if not root_artifact_id and ctx.job and artifacts:
+            root_art = await create_artifact(
+                parent_id=None,
+                root_id=None,
+                depth=0,
+                sha256=ctx.sha256,
+                size=os.path.getsize(ctx.file_path) if ctx.file_path else 0,
+                original_filename=ctx.original_filename,
+                extraction_source="document-analysis",
+                root_job_id=ctx.job_id,
                 job_id=ctx.job_id,
-                error=str(exc),
             )
-            return 0
+            root_artifact_id = root_art["id"]
+            parent_artifact_id = root_artifact_id
 
-        for art in artifacts:
-            art_path = Path(art["path"])
-            if not art_path.exists():
+        submitter = await InternalJobSubmitter.get_instance()
+        submitted = 0
+        seen_hashes: set[str] = set()
+        ancestor_hashes = ctx.ancestor_hashes or set()
+
+        for art_info in artifacts:
+            art_path = art_info.get("path", "")
+            if not art_path or not os.path.exists(art_path):
                 continue
 
-            content_type = ARTIFACT_CONTENT_TYPES.get(
-                art_path.suffix.lower(), "application/octet-stream"
+            file_size = os.path.getsize(art_path)
+            with open(art_path, "rb") as f:
+                file_sha256 = hashlib.sha256(f.read()).hexdigest()
+
+            original_name = art_info.get("name", os.path.basename(art_path))
+            origin_path = art_info.get("origin_path", original_name)
+
+            # Cycle detection
+            if file_sha256 in ancestor_hashes:
+                log.warning("doc_analysis_cycle_detected", sha256=file_sha256)
+                continue
+
+            # Extraction-level dedup
+            skip = file_sha256 in seen_hashes
+            seen_hashes.add(file_sha256)
+
+            artifact_record = await create_artifact(
+                parent_id=parent_artifact_id,
+                root_id=root_artifact_id,
+                depth=parent_job_depth + 1,
+                sha256=file_sha256,
+                size=file_size,
+                original_filename=original_name,
+                origin_path=origin_path,
+                extraction_source="document-analysis",
+                root_job_id=ctx.job_id,
+                verdict="skipped" if skip else None,
+                extraction_note="duplicate_within_extraction" if skip else None,
             )
 
-            try:
-                result_id = await submitter.submit_subjob(
-                    file_path=str(art_path),
-                    filename=art["filename"],
-                    content_type=content_type,
-                    sha256_hash=art["sha256"],
-                    file_size=art["size"],
-                    parent_job_id=parent_job_id,
-                    parent_job_depth=parent_job_depth,
-                )
-                if result_id:
-                    count += 1
-                    log.info(
-                        "doc_artifact_subjob_created",
-                        job_id=ctx.job_id,
-                        artifact=art["filename"],
-                        sub_job_id=result_id,
-                    )
-            except Exception as exc:
-                log.error(
-                    "doc_artifact_subjob_failed",
-                    job_id=ctx.job_id,
-                    artifact=art["filename"],
-                    error=str(exc),
-                )
+            if skip:
+                continue
 
-        return count
+            sub_job_id = await submitter.submit_subjob(
+                file_path=art_path,
+                filename=original_name,
+                content_type="application/octet-stream",
+                sha256_hash=file_sha256,
+                file_size=file_size,
+                parent_job_id=parent_job_id,
+                parent_job_depth=parent_job_depth,
+                artifact_id=artifact_record["id"],
+                root_artifact_id=root_artifact_id,
+                ancestor_hashes=ancestor_hashes | {ctx.sha256},
+            )
+            if sub_job_id:
+                submitted += 1
+
+        return submitted
 
     # ------------------------------------------------------------------
     # Utilities

@@ -24,6 +24,9 @@ class StageContext:
     previous_results: list["StageResult"] = field(default_factory=list)
     job: Job | None = field(default=None)
     db: AsyncSession | None = field(default=None)
+    artifact_id: str | None = None
+    root_artifact_id: str | None = None
+    ancestor_hashes: set[str] = field(default_factory=set)
 
 
 @dataclass

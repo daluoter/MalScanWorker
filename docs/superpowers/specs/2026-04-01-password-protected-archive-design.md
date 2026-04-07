@@ -74,6 +74,11 @@ In `jobs` table and `Job` model:
 1. Add `password_attempts` integer column, default `0`, non-null.
 2. Extend `JobStatus` enum and API schema literals to include `password_required`.
 
+`password_attempts` increment rule:
+
+1. Increment only when a user-submitted password was used for extraction and extraction failed with wrong password.
+2. Do not increment when password is required but not yet submitted.
+
 Rationale:
 
 - `password_attempts` tracks confirmed wrong attempts and supports deterministic retry limit.
@@ -129,7 +134,7 @@ Error behavior:
 #### Existing endpoint updates
 
 1. `GET /api/v1/jobs/{job_id}` and SSE stream include `password_required` status.
-2. Job status response includes attempts metadata (optional but recommended for UX clarity):
+2. Job status response includes attempts metadata (required for UX clarity):
    - `password_attempts`
    - `password_attempts_remaining`
 
@@ -236,7 +241,7 @@ Frontend behavior:
 
 1. Archive password is transient operational data; do not store in DB.
 2. Disallow password echo in logs, metrics labels, and error traces.
-3. Keep attempts limit hard-coded/configured server-side; ignore client-side counters.
+3. Keep attempts limit fixed at 3 server-side for this phase; ignore client-side counters.
 4. Use server-side state transitions only; frontend state is advisory.
 
 ## 8. Testing Strategy

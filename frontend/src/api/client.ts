@@ -95,16 +95,19 @@ class ApiClient {
 
         if (!response.ok) {
             let errorMessage = '取得報告失敗'
+            const error = new Error(errorMessage) as Error & { status?: number }
             try {
                 const errorData = await response.json()
                 errorMessage = errorData?.detail?.error?.message ||
-                               errorData?.error?.message ||
-                               errorData?.detail ||
-                               errorMessage
+                                errorData?.error?.message ||
+                                errorData?.detail ||
+                                errorMessage
             } catch {
                 errorMessage = response.statusText
             }
-            throw new Error(errorMessage)
+            error.message = errorMessage
+            error.status = response.status
+            throw error
         }
 
         return response.json()

@@ -199,10 +199,12 @@ def test_get_job_status_not_found(client: TestClient, mock_db_session: AsyncMock
 def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
     """Test getting report for completed job."""
     job_id = uuid.uuid4()
+    parent_job_id = uuid.uuid4()
 
     # Create a proper mock job object with complete result schema
     mock_job = MagicMock()
     mock_job.id = job_id
+    mock_job.parent_job_id = parent_job_id
     mock_job.status = JobStatus.DONE.value
     mock_job.sub_jobs = []
     mock_job.result = {
@@ -239,7 +241,18 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
     # Configure mock db session
     mock_result = MagicMock()
     mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
-    mock_db_session.execute.return_value = mock_result
+
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+
+    mock_db_session.execute.side_effect = [
+        mock_result,
+        mock_pending_result,
+        mock_tree_result,
+    ]
 
     response = client.get(f"/api/v1/reports/{job_id}")
 
@@ -247,6 +260,60 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
     data = response.json()
     assert data["verdict"] == "clean"
     assert "created_at" in data
+    assert data["parent_job_id"] == str(parent_job_id)
+
+
+def test_get_report_waits_for_pending_descendants(client: TestClient, mock_db_session: AsyncMock):
+    """Report should not be returned until descendant jobs complete."""
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "test-file-id",
+            "sha256": "abc123",
+            "mime": "text/plain",
+            "size": 1024,
+            "original_filename": "test.txt",
+        },
+        "verdict": "clean",
+        "score": 0,
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "abc", "sha1": "def", "sha256": "ghi"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 2
+
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 409
+    assert "Report not ready" in response.json()["detail"]
 
 
 def test_get_report_not_completed(client: TestClient, mock_db_session: AsyncMock):

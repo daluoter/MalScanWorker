@@ -243,3 +243,103 @@ async def increment_password_attempts(job_id: str) -> int:
         if attempts is None:
             raise ValueError(f"Job not found: {job_id}")
         return int(attempts)
+
+
+async def create_artifact(
+    *,
+    parent_id: str | None,
+    root_id: str | None,
+    depth: int,
+    sha256: str,
+    size: int,
+    original_filename: str,
+    origin_path: str | None = None,
+    extraction_source: str | None = None,
+    archive_type: str | None = None,
+    extraction_note: str | None = None,
+    job_id: str | None = None,
+    root_job_id: str | None = None,
+    md5: str | None = None,
+    sha1: str | None = None,
+    mime: str | None = None,
+    verdict: str | None = None,
+    score: int | None = None,
+) -> dict[str, Any]:
+    """Create an artifact record. Returns dict with 'id' key.
+
+    Uses its own session to avoid polluting the pipeline session.
+    """
+    from uuid import UUID as _UUID
+    from uuid import uuid4
+
+    async with AsyncSession(_engine) as session:
+        try:
+            artifact_id = uuid4()
+            from sqlalchemy import text
+
+            stmt = text(
+                """
+                INSERT INTO artifacts (
+                    id, parent_id, root_id, depth,
+                    sha256, md5, sha1, size, mime, original_filename,
+                    origin_path, extraction_source, archive_type, extraction_note,
+                    job_id, root_job_id, verdict, score, created_at
+                ) VALUES (
+                    :id, :parent_id, :root_id, :depth,
+                    :sha256, :md5, :sha1, :size, :mime, :original_filename,
+                    :origin_path, :extraction_source, :archive_type, :extraction_note,
+                    :job_id, :root_job_id, :verdict, :score, :created_at
+                )
+                """
+            )
+            await session.execute(
+                stmt,
+                {
+                    "id": artifact_id,
+                    "parent_id": _UUID(parent_id) if parent_id else None,
+                    "root_id": _UUID(root_id) if root_id else None,
+                    "depth": depth,
+                    "sha256": sha256,
+                    "md5": md5,
+                    "sha1": sha1,
+                    "size": size,
+                    "mime": mime,
+                    "original_filename": original_filename,
+                    "origin_path": origin_path,
+                    "extraction_source": extraction_source,
+                    "archive_type": archive_type,
+                    "extraction_note": extraction_note,
+                    "job_id": _UUID(job_id) if job_id else None,
+                    "root_job_id": _UUID(root_job_id) if root_job_id else None,
+                    "verdict": verdict,
+                    "score": score,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            )
+            await session.commit()
+            return {"id": str(artifact_id)}
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def update_artifact_verdict(
+    artifact_id: str,
+    verdict: str,
+    score: int,
+) -> None:
+    """Update the denormalized verdict/score on an artifact record."""
+    from uuid import UUID as _UUID
+
+    from sqlalchemy import text
+
+    async with AsyncSession(_engine) as session:
+        try:
+            stmt = text("UPDATE artifacts SET verdict = :verdict, score = :score WHERE id = :id")
+            await session.execute(
+                stmt, {"id": _UUID(artifact_id), "verdict": verdict, "score": score}
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

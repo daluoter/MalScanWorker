@@ -1,5 +1,6 @@
 """Internal job submission utility for recursive analysis."""
 
+import asyncio
 import json
 from typing import Optional
 from uuid import UUID
@@ -9,8 +10,10 @@ import structlog
 from malscan.config import get_settings
 from malscan.models.file import File
 from malscan.models.job import Job, JobStatus
+from malscan.storage import get_minio_client
 from malscan.storage import upload_file_path as upload_to_minio
 from malscan_worker.db import _engine
+from minio.error import S3Error
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +66,22 @@ class InternalJobSubmitter:
             self._exchange = None
             log.info("internal_job_submitter_mq_closed")
 
+    async def _storage_object_exists(self, key: str) -> bool:
+        """Check whether an object key exists in MinIO uploads bucket."""
+
+        def _check_exists() -> bool:
+            client = get_minio_client()
+            try:
+                client.stat_object(settings.minio_bucket_uploads, key)
+                return True
+            except S3Error as e:
+                if e.code == "NoSuchKey":
+                    return False
+                raise
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _check_exists)
+
     async def submit_subjob(
         self,
         *,
@@ -73,6 +92,9 @@ class InternalJobSubmitter:
         file_size: int,
         parent_job_id: str,
         parent_job_depth: int,
+        artifact_id: str | None = None,
+        root_artifact_id: str | None = None,
+        ancestor_hashes: set[str] | None = None,
     ) -> str | None:
         """Submit a new sub-job for analysis.
 
@@ -118,6 +140,15 @@ class InternalJobSubmitter:
                     file_id=str(file_record.id),
                     sha256=sha256_hash,
                 )
+
+                # Dedup rows may outlive MinIO lifecycle; ensure blob still exists.
+                if not await self._storage_object_exists(sha256_hash):
+                    log.warning(
+                        "dedup_file_missing_in_storage_reupload",
+                        file_id=str(file_record.id),
+                        sha256=sha256_hash,
+                    )
+                    await upload_to_minio(file_path, sha256_hash, content_type)
             else:
                 # 2. Upload to MinIO (only if it's a new unique file)
                 try:
@@ -178,6 +209,9 @@ class InternalJobSubmitter:
             "storage_key": sha256_hash,
             "sha256": sha256_hash,
             "original_filename": filename,
+            "artifact_id": artifact_id,
+            "root_artifact_id": root_artifact_id,
+            "ancestor_hashes": list(ancestor_hashes or set()),
         }
 
         try:

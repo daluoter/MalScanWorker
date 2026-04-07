@@ -95,7 +95,7 @@ async def test_archive_extract_not_archive(stage_context: StageContext):
     result = await stage.execute(stage_context)
 
     assert result.status == "skipped"
-    assert "Not a supported archive format" in result.findings["reason"]
+    assert "Not an archive" in result.findings["reason"]
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_archive_extract_max_depth(stage_context: StageContext):
     result = await stage.execute(stage_context)
 
     assert result.status == "skipped"
-    assert "Max recursion depth reached" in result.findings["reason"]
+    assert "Max depth" in result.findings["reason"]
 
 
 @pytest.mark.asyncio
@@ -190,6 +190,11 @@ async def test_archive_extract_7z(tmp_path):
         import py7zr
     except ImportError:
         pytest.skip("py7zr not installed")
+
+    import shutil
+
+    if shutil.which("7z") is None:
+        pytest.skip("7z CLI tool not installed")
 
     # Create a 7z file with a test file inside
     inner_file = tmp_path / "inner.txt"

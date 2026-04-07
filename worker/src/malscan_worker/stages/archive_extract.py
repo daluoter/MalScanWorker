@@ -1,605 +1,286 @@
 """Archive extraction stage for processing compressed files.
 
-Supports ZIP, 7z, RAR, tar (gz/bz2/xz), gzip, and bz2 formats.
+Uses the pluggable handler registry to detect and extract archives,
+creates artifact records for extracted files, and submits sub-jobs.
 """
 
-import bz2
-import gzip
+import asyncio
 import hashlib
 import os
-import tarfile
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import structlog
-from malscan.config import get_settings
 
+from malscan_worker.config import get_settings
+from malscan_worker.db import create_artifact
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
+from malscan_worker.extractors import (
+    ExtractionLimits,
+    get_default_registry,
+)
+from malscan_worker.extractors.safety import remove_symlinks
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
-log = structlog.get_logger()
-
-# Optional dependencies — graceful degradation if not installed
-try:
-    import py7zr
-
-    HAS_PY7ZR = True
-except ImportError:
-    HAS_PY7ZR = False
-
-try:
-    import rarfile
-
-    HAS_RARFILE = True
-except ImportError:
-    HAS_RARFILE = False
-
-try:
-    import pyzipper
-
-    HAS_PYZIPPER = True
-except ImportError:
-    HAS_PYZIPPER = False
+logger = structlog.get_logger()
 
 
 class ArchiveExtractStage(Stage):
     """Extract files from archives and submit them as sub-jobs.
 
-    Supported formats: ZIP, 7z, RAR, tar(.gz/.bz2/.xz), gzip, bz2.
+    Uses the handler registry to detect archive formats and delegates
+    extraction to the appropriate format handler.  Creates artifact
+    records for every extracted file and submits sub-jobs via MQ.
     """
+
+    def __init__(self) -> None:
+        self._registry = get_default_registry()
 
     @property
     def name(self) -> str:
         return "archive-extract"
 
+    # ------------------------------------------------------------------
+    # Main execute
+    # ------------------------------------------------------------------
+
     async def execute(self, ctx: StageContext) -> StageResult:
         started_at = datetime.now(timezone.utc)
-
-        log.info("archive_extract_start", job_id=ctx.job_id, file=str(ctx.file_path))
-
         settings = get_settings()
+
+        # --- Skip checks ---------------------------------------------------
+        if not ctx.file_path or not os.path.exists(ctx.file_path):
+            return self._skip_result(started_at, "File not found")
+
         max_depth = getattr(settings, "max_job_depth", 3)
+        if ctx.job and ctx.job.depth >= max_depth:
+            return self._skip_result(started_at, f"Max depth {max_depth} reached")
 
-        if not ctx.file_path or not ctx.file_path.exists():
-            log.warning("archive_extract_file_not_found", job_id=ctx.job_id)
-            return self._build_result(started_at, "skipped", {"reason": "File not found"})
+        # --- Detect format --------------------------------------------------
+        mime = self._get_mime(ctx)
+        handler = self._registry.detect(ctx.file_path, mime)
+        if handler is None:
+            return self._skip_result(started_at, "Not an archive")
 
-        # Skip if max recursion depth reached
-        current_depth = getattr(ctx.job, "depth", 0)
-        if current_depth >= max_depth:
-            log.info("archive_extract_max_depth_reached", job_id=ctx.job_id, depth=current_depth)
-            return self._build_result(
-                started_at, "skipped", {"reason": "Max recursion depth reached"}
-            )
-
-        # Detect archive format
-        archive_type = self._detect_format(ctx)
-        if archive_type is None:
-            log.info("archive_extract_not_supported_format", job_id=ctx.job_id)
-            return self._build_result(
-                started_at, "skipped", {"reason": "Not a supported archive format"}
-            )
-
-        log.info(
+        logger.info(
             "archive_format_detected",
             job_id=ctx.job_id,
-            format=archive_type,
+            format=handler.name,
             file=str(ctx.file_path),
         )
 
-        # Defense limits
-        max_files = 15  # Increased slightly
-        max_total_size = 200 * 1024 * 1024  # 200MB
-        max_single_size = getattr(settings, "max_file_size", 100 * 1024 * 1024)
-        max_expansion_ratio = 100
-
-        archive_size = ctx.file_path.stat().st_size
-
-        extract_dir = Path(f"/tmp/{ctx.job_id}/extracted")
-        extract_dir.mkdir(parents=True, exist_ok=True)
-
-        log.info("archive_extracting", job_id=ctx.job_id, dir=str(extract_dir))
-
-        try:
-            result = self._extract(
-                archive_type=archive_type,
-                file_path=ctx.file_path,
-                extract_dir=extract_dir,
-                archive_size=archive_size,
-                max_files=max_files,
-                max_total_size=max_total_size,
-                max_single_size=max_single_size,
-                max_expansion_ratio=max_expansion_ratio,
-                archive_password=ctx.archive_password,
-            )
-        except (ArchivePasswordRequiredError, ArchiveWrongPasswordError):
-            raise
-        except Exception as e:
-            log.error("archive_extraction_failed", job_id=ctx.job_id, error=str(e), exc_info=True)
-            return self._build_result(started_at, "failed", {"error": f"Extraction failed: {e!s}"})
-
-        # If malicious archive detected (e.g. zip bomb)
-        if result.get("malicious"):
-            log.warning(
-                "archive_malicious_detected",
-                job_id=ctx.job_id,
-                reason=result.get("reason"),
-            )
-            return self._build_result(started_at, "ok", result)
-
-        extracted_files = result.get("files", [])
-        log.info("archive_extracted_files_collected", job_id=ctx.job_id, count=len(extracted_files))
-
-        sub_jobs_created = 0
-
-        # Submit extracted files as sub-jobs
-        if ctx.job and extracted_files:
-            # Pre-capture parent job attributes as plain values BEFORE any
-            # async operations that might expire the ORM object.
-            parent_job_id = str(ctx.job.id)
-            parent_job_depth = ctx.job.depth
-
-            try:
-                submitter = await InternalJobSubmitter.get_instance()
-
-                for file_path, original_filename, file_size in extracted_files:
-                    path_obj = Path(file_path)
-
-                    if not path_obj.exists():
-                        log.warning("extracted_file_missing_on_disk", path=str(path_obj))
-                        continue
-
-                    # Calculate SHA256 of extracted file
-                    hasher = hashlib.sha256()
-                    with open(path_obj, "rb") as f:
-                        for chunk in iter(lambda: f.read(4096), b""):
-                            hasher.update(chunk)
-                    file_sha256 = hasher.hexdigest()
-
-                    log.info(
-                        "submitting_subjob",
-                        job_id=ctx.job_id,
-                        filename=original_filename,
-                        sha256=file_sha256,
-                    )
-
-                    # Submit sub-job (uses its own independent DB session)
-                    try:
-                        result_id = await submitter.submit_subjob(
-                            file_path=str(path_obj),
-                            filename=original_filename,
-                            content_type="application/octet-stream",
-                            sha256_hash=file_sha256,
-                            file_size=file_size,
-                            parent_job_id=parent_job_id,
-                            parent_job_depth=parent_job_depth,
-                        )
-                        if result_id:
-                            sub_jobs_created += 1
-                    except Exception as e:
-                        log.error(
-                            "subjob_submission_failed",
-                            job_id=ctx.job_id,
-                            filename=original_filename,
-                            error=str(e),
-                        )
-            except Exception as e:
-                log.error(
-                    "submitter_initialization_failed",
-                    job_id=ctx.job_id,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return self._build_result(
-                    started_at,
-                    "failed",
-                    {"error": f"Failed to initialize sub-job submitter: {e!s}"},
-                )
-
-        log.info("archive_extract_finished", job_id=ctx.job_id, sub_jobs=sub_jobs_created)
-
-        return self._build_result(
-            started_at,
-            "ok",
-            {
-                "archive_type": archive_type,
-                "extracted_count": len(extracted_files),
-                "sub_jobs_created": sub_jobs_created,
-                "total_extracted_bytes": sum(f[2] for f in extracted_files),
-            },
+        # --- Build limits ---------------------------------------------------
+        limits = ExtractionLimits(
+            max_files=settings.extraction_max_files,
+            max_extracted_bytes=settings.extraction_max_bytes,
+            max_single_file_bytes=settings.extraction_max_single_bytes,
+            max_expansion_ratio=settings.extraction_max_ratio,
+            timeout_seconds=settings.extraction_timeout,
         )
 
-    # ------------------------------------------------------------------
-    # Format detection
-    # ------------------------------------------------------------------
+        # --- Create root artifact if depth-0 and no artifact context yet ----
+        root_artifact_id = ctx.root_artifact_id
+        parent_artifact_id = ctx.artifact_id
+        root_job_id = ctx.job_id
 
-    def _detect_format(self, ctx: StageContext) -> str | None:
-        """Detect archive format using multiple signals."""
-        file_path = ctx.file_path
+        if not root_artifact_id and ctx.job:
+            root_art = await create_artifact(
+                parent_id=None,
+                root_id=None,  # will self-reference after creation
+                depth=0,
+                sha256=ctx.sha256,
+                size=os.path.getsize(ctx.file_path),
+                original_filename=ctx.original_filename,
+                extraction_source="archive-extract",
+                archive_type=handler.name,
+                root_job_id=ctx.job_id,
+                job_id=ctx.job_id,
+            )
+            root_artifact_id = root_art["id"]
+            parent_artifact_id = root_artifact_id
 
-        # Priority 1: Magic number detection (most reliable)
+        # --- Extract with timeout -------------------------------------------
+        extract_dir = Path(f"/tmp/{ctx.job_id}/extract")
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
         try:
-            with open(file_path, "rb") as f:
-                magic = f.read(8)
-            if magic.startswith(b"PK\x03\x04"):
-                return "zip"
-            if magic.startswith(b"7z\xbc\xaf\x27\x1c"):
-                return "7z"
-            if magic.startswith(b"Rar!\x1a\x07"):
-                return "rar"
-            if magic.startswith(b"\x1f\x8b"):
-                return "gzip"
-            if magic.startswith(b"BZ"):
-                return "bz2"
-        except Exception:
-            pass
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    handler.extract,
+                    ctx.file_path,
+                    extract_dir,
+                    limits,
+                    ctx.archive_password,
+                ),
+                timeout=limits.timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            return self._error_result(started_at, "Extraction timed out")
+        except (ArchivePasswordRequiredError, ArchiveWrongPasswordError):
+            raise
+        except Exception as exc:
+            logger.error(
+                "archive_extraction_failed",
+                job_id=ctx.job_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            return self._error_result(started_at, f"Extraction failed: {exc!s}")
 
-        # Priority 2: Use results from FileTypeStage and extension
-        file_type_findings = {}
-        for res in ctx.previous_results:
-            if res.stage_name == "file-type":
-                file_type_findings = res.findings
-                break
-
-        mime = file_type_findings.get("mime_type", "").lower()
-        ext = file_path.suffix.lower()
-
-        # Also check original filename extension when downloaded file has no extension
-        original_ext = ""
-        if ctx.original_filename:
-            from pathlib import PurePosixPath
-
-            original_ext = PurePosixPath(ctx.original_filename).suffix.lower()
-
-        log.debug("detecting_format", mime=mime, extension=ext)
-
-        # ZIP
-        if "zip" in mime or ext == ".zip" or zipfile.is_zipfile(file_path):
-            return "zip"
-
-        # 7z
-        if (
-            "7z" in mime
-            or ext == ".7z"
-            or original_ext == ".7z"
-            or mime == "application/x-compressed"
-        ):
-            if HAS_PY7ZR:
-                # Use string path for py7zr compatibility in some environments
-                if py7zr.is_7zfile(str(file_path)):
-                    return "7z"
-                log.warning(
-                    "7z_signature_check_failed_but_detected_by_mime_ext",
-                    file=str(file_path),
-                )
-                # Fallback to 7z if mime/ext says so, extractor will try anyway
-                return "7z"
-
-        # RAR
-        if "rar" in mime or ext == ".rar":
-            if HAS_RARFILE:
-                if rarfile.is_rarfile(str(file_path)):
-                    return "rar"
-                return "rar"
-
-        # Tar
-        if "tar" in mime or ext in [".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz"]:
-            if tarfile.is_tarfile(file_path):
-                return "tar"
-
-        # Gzip / Bzip2
-        if mime == "application/gzip" or ext == ".gz":
-            return "gzip"
-        if mime == "application/x-bzip2" or ext == ".bz2":
-            return "bz2"
-
-        # Magic number fallbacks
-        try:
-            with open(file_path, "rb") as f:
-                magic = f.read(8)
-            if magic.startswith(b"PK\x03\x04"):
-                return "zip"
-            if magic.startswith(b"7z\xbc\xaf\x27\x1c"):
-                return "7z"
-            if magic.startswith(b"Rar!\x1a\x07"):
-                return "rar"
-            if magic.startswith(b"\x1f\x8b"):
-                return "gzip"
-            if magic.startswith(b"BZ"):
-                return "bz2"
-        except Exception:
-            pass
-
-        return None
-
-    # ------------------------------------------------------------------
-    # Extraction dispatcher
-    # ------------------------------------------------------------------
-
-    def _extract(self, **args: Any) -> dict[str, Any]:
-        """Extract files from archive."""
-        archive_type = args["archive_type"]
-        extractors = {
-            "zip": self._extract_zip,
-            "7z": self._extract_7z,
-            "rar": self._extract_rar,
-            "tar": self._extract_tar,
-            "gzip": self._extract_single_compressed,
-            "bz2": self._extract_single_compressed,
-        }
-        extractor = extractors.get(archive_type)
-        if extractor is None:
-            return {"files": []}
-
-        return extractor(**args)
-
-    # ------------------------------------------------------------------
-    # Extractor implementations
-    # ------------------------------------------------------------------
-
-    def _zip_info_uses_aes(self, info: zipfile.ZipInfo) -> bool:
-        """Return True when a ZIP entry uses WinZip AES encryption."""
-        if getattr(info, "compress_type", None) == 99:
-            return True
-
-        extra = getattr(info, "extra", b"")
-        return b"\x01\x99" in extra
-
-    def _classify_zip_runtime_error(
-        self,
-        exc: Exception,
-        archive_password: str | None,
-    ) -> Exception | None:
-        """Map ZIP runtime errors to archive password domain exceptions."""
-        msg = str(exc).lower()
-        if "bad password" in msg or "wrong password" in msg or "incorrect password" in msg:
-            return ArchiveWrongPasswordError("zip")
-        if "password required" in msg or "encrypted" in msg:
-            if archive_password:
-                return ArchiveWrongPasswordError("zip")
-            return ArchivePasswordRequiredError("zip")
-        if "wz_aes" in msg and archive_password:
-            return ArchiveWrongPasswordError("zip")
-        return None
-
-    def _extract_zip(self, file_path: Path, extract_dir: Path, **limits: Any) -> dict[str, Any]:
-        extracted_files: list[tuple[str, str, int]] = []
-        total_extracted_size = 0
-        base_dir_abs = os.path.abspath(str(extract_dir))
-        archive_password: str | None = limits.get("archive_password")
-        password_bytes = archive_password.encode() if archive_password else None
-
-        with zipfile.ZipFile(file_path, "r") as zf:
-            zip_infos = zf.infolist()
-            has_aes_member = any(
-                self._zip_info_uses_aes(info) for info in zip_infos if not info.is_dir()
+        # --- Zip bomb check -------------------------------------------------
+        if result.malicious:
+            return self._malicious_result(
+                started_at, result.reason or "Malicious archive", handler.name
             )
 
-            if has_aes_member and HAS_PYZIPPER:
-                with pyzipper.AESZipFile(file_path, "r") as azf:
-                    for i, info in enumerate(azf.infolist()):
-                        if i >= limits["max_files"]:
-                            break
-                        if info.is_dir():
-                            continue
+        # --- Remove symlinks for safety -------------------------------------
+        remove_symlinks(str(extract_dir))
 
-                        is_encrypted = bool(getattr(info, "flag_bits", 0) & 0x1)
-                        if is_encrypted and not password_bytes:
-                            raise ArchivePasswordRequiredError("zip")
+        # --- Process extracted files ----------------------------------------
+        seen_hashes: set[str] = set()
+        created_artifacts: list[str] = []
+        sub_jobs_created = 0
+        ancestor_hashes = ctx.ancestor_hashes or set()
 
-                        target_path = os.path.join(base_dir_abs, info.filename)
-                        if not os.path.abspath(target_path).startswith(base_dir_abs):
-                            continue
+        # Only initialise submitter when we have a real job context
+        submitter = await InternalJobSubmitter.get_instance() if ctx.job else None
 
-                        res = self._check_size_limits(
-                            info.file_size, total_extracted_size, limits, info.filename
-                        )
-                        if res:
-                            return res
+        for ef in result.files:
+            # Compute SHA256
+            file_sha256 = hashlib.sha256(open(ef.path, "rb").read()).hexdigest()
 
-                        total_extracted_size += info.file_size
-                        try:
-                            extracted_path = azf.extract(
-                                info, path=base_dir_abs, pwd=password_bytes
-                            )
-                        except RuntimeError as exc:
-                            mapped_error = self._classify_zip_runtime_error(exc, archive_password)
-                            if mapped_error:
-                                raise mapped_error from exc
-                            raise
-
-                        extracted_files.append((extracted_path, info.filename, info.file_size))
-
-                return {"files": extracted_files}
-
-            for i, info in enumerate(zf.infolist()):
-                if i >= limits["max_files"]:
-                    break
-                if info.is_dir():
-                    continue
-
-                is_encrypted = bool(getattr(info, "flag_bits", 0) & 0x1)
-                if is_encrypted and not password_bytes:
-                    raise ArchivePasswordRequiredError("zip")
-
-                # Path traversal defense
-                target_path = os.path.join(base_dir_abs, info.filename)
-                if not os.path.abspath(target_path).startswith(base_dir_abs):
-                    continue
-
-                # Size checks
-                res = self._check_size_limits(
-                    info.file_size, total_extracted_size, limits, info.filename
+            # Cycle detection — skip if hash matches an ancestor
+            if file_sha256 in ancestor_hashes:
+                logger.warning(
+                    "recursive_loop_detected",
+                    sha256=file_sha256,
+                    origin=ef.origin_path,
                 )
-                if res:
-                    return res
+                continue
 
-                total_extracted_size += info.file_size
+            # Extraction-level dedup
+            skip = file_sha256 in seen_hashes
+            seen_hashes.add(file_sha256)
+
+            # Create artifact record and submit sub-job only with a real job
+            if ctx.job:
+                art = await create_artifact(
+                    parent_id=parent_artifact_id,
+                    root_id=root_artifact_id,
+                    depth=ctx.job.depth + 1,
+                    sha256=file_sha256,
+                    size=ef.size,
+                    original_filename=ef.original_name,
+                    origin_path=ef.origin_path,
+                    extraction_source="archive-extract",
+                    archive_type=handler.name,
+                    root_job_id=root_job_id if root_job_id else ctx.job_id,
+                    verdict="skipped" if skip else None,
+                    extraction_note="duplicate_within_extraction" if skip else None,
+                )
+                created_artifacts.append(art["id"])
+
+            if skip:
+                continue
+
+            # Submit sub-job
+            if submitter:
                 try:
-                    extracted_path = zf.extract(info, path=base_dir_abs, pwd=password_bytes)
-                except RuntimeError as exc:
-                    mapped_error = self._classify_zip_runtime_error(exc, archive_password)
-                    if mapped_error:
-                        raise mapped_error from exc
-                    raise
-                extracted_files.append((extracted_path, info.filename, info.file_size))
-
-        return {"files": extracted_files}
-
-    def _extract_7z(self, file_path: Path, extract_dir: Path, **limits: Any) -> dict[str, Any]:
-        if not HAS_PY7ZR:
-            return {"files": []}
-        extracted_files: list[tuple[str, str, int]] = []
-        base_dir_abs = os.path.abspath(str(extract_dir))
-        archive_password: str | None = limits.get("archive_password")
-
-        with py7zr.SevenZipFile(str(file_path), mode="r", password=archive_password) as szf:
-            needs_password = getattr(szf, "needs_password", None)
-            if callable(needs_password) and needs_password() and not archive_password:
-                raise ArchivePasswordRequiredError("7z")
-
-            # We skip pre-check size logic due to py7zr's all-or-nothing extraction
-            # and rely on the fact that we follow up with os.walk
-            try:
-                szf.extractall(path=base_dir_abs)
-            except Exception as exc:
-                msg = str(exc).lower()
-                if "wrong password" in msg or "bad password" in msg or "incorrect password" in msg:
-                    raise ArchiveWrongPasswordError("7z") from exc
-                if "corrupt input data" in msg and archive_password:
-                    raise ArchiveWrongPasswordError("7z") from exc
-                if "password required" in msg or "encrypted" in msg:
-                    raise ArchivePasswordRequiredError("7z") from exc
-
-                py7zr_password_required = getattr(py7zr, "PasswordRequired", None)
-                if py7zr_password_required and isinstance(exc, py7zr_password_required):
-                    if archive_password:
-                        raise ArchiveWrongPasswordError("7z") from exc
-                    raise ArchivePasswordRequiredError("7z") from exc
-                raise
-
-            for root, _, files in os.walk(base_dir_abs):
-                for fname in files:
-                    abs_path = os.path.join(root, fname)
-                    rel_path = os.path.relpath(abs_path, base_dir_abs)
-                    size = os.path.getsize(abs_path)
-                    extracted_files.append((abs_path, rel_path, size))
-
-        return {"files": extracted_files}
-
-    def _extract_rar(self, file_path: Path, extract_dir: Path, **limits: Any) -> dict[str, Any]:
-        if not HAS_RARFILE:
-            return {"files": []}
-        extracted_files: list[tuple[str, str, int]] = []
-        base_dir_abs = os.path.abspath(str(extract_dir))
-        archive_password: str | None = limits.get("archive_password")
-
-        with rarfile.RarFile(str(file_path), "r") as rf:
-            for i, info in enumerate(rf.infolist()):
-                if i >= limits["max_files"]:
-                    break
-                if info.is_dir():
-                    continue
-
-                needs_password = getattr(info, "needs_password", None)
-                if callable(needs_password) and needs_password() and not archive_password:
-                    raise ArchivePasswordRequiredError("rar")
-
-                target_path = os.path.join(base_dir_abs, info.filename)
-                if not os.path.abspath(target_path).startswith(base_dir_abs):
-                    continue
-
-                res = self._check_size_limits(info.file_size, 0, limits, info.filename)
-                if res:
-                    return res
-
-                try:
-                    rf.extract(info, path=base_dir_abs, pwd=archive_password)
+                    sub_job_id = await submitter.submit_subjob(
+                        file_path=ef.path,
+                        filename=ef.original_name,
+                        content_type="application/octet-stream",
+                        sha256_hash=file_sha256,
+                        file_size=ef.size,
+                        parent_job_id=str(ctx.job.id),
+                        parent_job_depth=ctx.job.depth,
+                        artifact_id=art["id"],
+                        root_artifact_id=root_artifact_id,
+                        ancestor_hashes=ancestor_hashes | {ctx.sha256},
+                    )
+                    if sub_job_id:
+                        sub_jobs_created += 1
                 except Exception as exc:
-                    msg = str(exc).lower()
-                    rar_wrong_password = getattr(rarfile, "RarWrongPassword", None)
-                    if (rar_wrong_password and isinstance(exc, rar_wrong_password)) or (
-                        "wrong password" in msg
-                        or "bad password" in msg
-                        or "incorrect password" in msg
-                    ):
-                        raise ArchiveWrongPasswordError("rar") from exc
-                    if "password required" in msg or "encrypted" in msg:
-                        raise ArchivePasswordRequiredError("rar") from exc
-                    raise
-                extracted_files.append((target_path, info.filename, info.file_size))
+                    logger.error(
+                        "subjob_submission_failed",
+                        job_id=ctx.job_id,
+                        filename=ef.original_name,
+                        error=str(exc),
+                    )
 
-        return {"files": extracted_files}
-
-    def _extract_tar(self, file_path: Path, extract_dir: Path, **limits: Any) -> dict[str, Any]:
-        extracted_files: list[tuple[str, str, int]] = []
-        base_dir_abs = os.path.abspath(str(extract_dir))
-
-        with tarfile.open(file_path, "r:*") as tf:
-            count = 0
-            for member in tf:
-                if count >= limits["max_files"]:
-                    break
-                if not member.isreg():
-                    continue
-
-                target_path = os.path.join(base_dir_abs, member.name)
-                if not os.path.abspath(target_path).startswith(base_dir_abs):
-                    continue
-
-                res = self._check_size_limits(member.size, 0, limits, member.name)
-                if res:
-                    return res
-
-                tf.extract(member, path=base_dir_abs)
-                extracted_files.append((target_path, member.name, member.size))
-                count += 1
-
-        return {"files": extracted_files}
-
-    def _extract_single_compressed(
-        self, file_path: Path, extract_dir: Path, **limits: Any
-    ) -> dict[str, Any]:
-        archive_type = limits.get("archive_type", "gzip")
-        base_dir_abs = os.path.abspath(str(extract_dir))
-        stem = file_path.stem or "decompressed"
-        output_path = os.path.join(base_dir_abs, stem)
-
-        opener = gzip.open if archive_type == "gzip" else bz2.open
-        total_size = 0
-        with opener(file_path, "rb") as fin, open(output_path, "wb") as fout:
-            while True:
-                chunk = fin.read(65536)
-                if not chunk:
-                    break
-                total_size += len(chunk)
-                if total_size > limits["max_single_size"]:
-                    os.remove(output_path)
-                    return {"malicious": True, "reason": "Decompressed size limit exceeded"}
-                fout.write(chunk)
-
-        return {"files": [(output_path, stem, total_size)]}
-
-    def _check_size_limits(
-        self, size: int, total_so_far: int, limits: dict, filename: str
-    ) -> dict | None:
-        if size > limits["max_single_size"]:
-            return {"malicious": True, "reason": f"File {filename} too large"}
-        if total_so_far + size > limits["max_total_size"]:
-            return {"malicious": True, "reason": "Total extracted size too large"}
-        return None
-
-    def _build_result(self, started_at: datetime, status: str, findings: dict) -> StageResult:
+        # --- Build final result ---------------------------------------------
         ended_at = datetime.now(timezone.utc)
         return StageResult(
             stage_name=self.name,
-            status=status,
+            status="ok",
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=int((ended_at - started_at).total_seconds() * 1000),
-            findings=findings,
+            findings={
+                "archive_type": handler.name,
+                "extracted_count": len(result.files),
+                "sub_jobs_created": sub_jobs_created,
+                "artifacts_created": len(created_artifacts),
+                "warnings": result.warnings,
+                "total_extracted_bytes": sum(ef.size for ef in result.files),
+            },
+            artifacts=created_artifacts,
+        )
+
+    # ------------------------------------------------------------------
+    # MIME helper — extracts MIME from previous file-type stage results
+    # ------------------------------------------------------------------
+
+    def _get_mime(self, ctx: StageContext) -> str:
+        """Get MIME type from the file-type stage in previous results."""
+        for res in ctx.previous_results:
+            if res.stage_name == "file-type":
+                return (res.findings.get("mime_type") or "").lower()
+        return ""
+
+    # ------------------------------------------------------------------
+    # Result helpers
+    # ------------------------------------------------------------------
+
+    def _skip_result(self, started_at: datetime, reason: str) -> StageResult:
+        ended_at = datetime.now(timezone.utc)
+        return StageResult(
+            stage_name=self.name,
+            status="skipped",
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=int((ended_at - started_at).total_seconds() * 1000),
+            findings={"reason": reason},
+            artifacts=[],
+        )
+
+    def _error_result(self, started_at: datetime, reason: str) -> StageResult:
+        ended_at = datetime.now(timezone.utc)
+        return StageResult(
+            stage_name=self.name,
+            status="error",
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=int((ended_at - started_at).total_seconds() * 1000),
+            findings={"reason": reason},
+            artifacts=[],
+        )
+
+    def _malicious_result(
+        self, started_at: datetime, reason: str, archive_type: str
+    ) -> StageResult:
+        ended_at = datetime.now(timezone.utc)
+        return StageResult(
+            stage_name=self.name,
+            status="malicious",
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=int((ended_at - started_at).total_seconds() * 1000),
+            findings={
+                "malicious": True,
+                "reason": reason,
+                "archive_type": archive_type,
+            },
             artifacts=[],
         )

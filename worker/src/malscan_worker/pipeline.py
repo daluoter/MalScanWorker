@@ -358,6 +358,9 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
                 previous_results=[],
                 job=job_instance,
                 db=session,
+                artifact_id=job_data.get("artifact_id"),
+                root_artifact_id=job_data.get("root_artifact_id"),
+                ancestor_hashes=set(job_data.get("ancestor_hashes", [])),
             )
 
             # Update status to indicate parallel static analysis
@@ -409,6 +412,21 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
 
         # Store result in database
         await update_job_result(job_id, analysis_result)
+
+        # Update artifact verdict if this job is linked to an artifact
+        if job_data.get("artifact_id"):
+            try:
+                from malscan_worker.db import update_artifact_verdict
+
+                await update_artifact_verdict(
+                    artifact_id=job_data["artifact_id"],
+                    verdict=analysis_result["verdict"],
+                    score=analysis_result["score"],
+                )
+            except Exception:
+                log.exception(
+                    "failed_to_update_artifact_verdict", artifact_id=job_data["artifact_id"]
+                )
 
         # Determine final status
         # If we reached here, the job is technically "done",

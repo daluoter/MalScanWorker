@@ -6,23 +6,51 @@ export default function ReportPage() {
     const { jobId } = useParams<{ jobId: string }>()
     const [report, setReport] = useState<Report | null>(null)
     const [error, setError] = useState<string | null>(null)
+    const [isWaitingDescendants, setIsWaitingDescendants] = useState(false)
     const [copiedHash, setCopiedHash] = useState(false)
 
     useEffect(() => {
         if (!jobId) return
 
+        let cancelled = false
+        let retryTimer: ReturnType<typeof setTimeout> | null = null
+
         const fetchReport = async () => {
-            setReport(null) // Reset state for new jobId
-            setError(null)
+            if (cancelled) return
+
             try {
                 const data = await apiClient.getReport(jobId)
+                if (cancelled) return
                 setReport(data)
+                setError(null)
+                setIsWaitingDescendants(false)
             } catch (err) {
+                if (cancelled) return
+
+                const maybeStatus = (err as Error & { status?: number }).status
+                if (maybeStatus === 409) {
+                    setIsWaitingDescendants(true)
+                    setError(null)
+                    retryTimer = setTimeout(fetchReport, 2000)
+                    return
+                }
+
+                setIsWaitingDescendants(false)
                 setError(err instanceof Error ? err.message : '無法取得報告')
             }
         }
 
+        setReport(null) // Reset state for new jobId
+        setError(null)
+        setIsWaitingDescendants(false)
         fetchReport()
+
+        return () => {
+            cancelled = true
+            if (retryTimer) {
+                clearTimeout(retryTimer)
+            }
+        }
     }, [jobId])
 
     const copyToClipboard = async (text: string) => {
@@ -56,8 +84,13 @@ export default function ReportPage() {
                 <div className="glass-card p-8 text-center">
                     <div className="text-4xl mb-4 animate-pulse">📋</div>
                     <p className="text-xl font-mono text-neon-cyan terminal-cursor">
-                        LOADING REPORT
+                        {isWaitingDescendants ? 'WAITING FOR DESCENDANTS' : 'LOADING REPORT'}
                     </p>
+                    {isWaitingDescendants && (
+                        <p className="mt-3 text-sm text-slate-400 font-mono">
+                            子檔案仍在分析中，報告會在全部完成後自動顯示
+                        </p>
+                    )}
                 </div>
             </div>
         )
@@ -106,6 +139,16 @@ export default function ReportPage() {
                     </span>
                 ) : null}
             </div>
+
+            {report.parent_job_id && (
+                <Link
+                    to={`/jobs/${report.parent_job_id}`}
+                    className="inline-flex items-center gap-2 mb-4 text-sm font-mono text-neon-cyan hover:text-neon-purple transition-colors"
+                >
+                    <span>←</span>
+                    <span>返回上一層分析</span>
+                </Link>
+            )}
 
             {/* Verdict Card - Prominent Neon Border */}
             <div className={`verdict-card ${verdictClasses[report.verdict]} mb-6 animate-glow-pulse`}>

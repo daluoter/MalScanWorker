@@ -9,7 +9,7 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from sse_starlette.sse import EventSourceResponse
@@ -17,6 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from malscan.config import get_settings
 from malscan.db import get_db, get_session_factory
 from malscan.models import File, Job, JobStatus
+from malscan.models.artifact import Artifact
 from malscan.queue import publish_job
 from malscan.schemas.requests import (
     JobStatusResponse,
@@ -501,6 +502,73 @@ async def stream_job_status(job_id: str, request: Request):
     return EventSourceResponse(event_generator())
 
 
+async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | None:
+    """Build hierarchical artifact tree from flat records."""
+    from uuid import UUID
+
+    stmt = (
+        select(Artifact)
+        .where(Artifact.root_job_id == UUID(root_job_id))
+        .order_by(Artifact.depth, Artifact.created_at)
+    )
+    result = await db.execute(stmt)
+    artifacts = result.scalars().all()
+
+    if not artifacts:
+        return None
+
+    nodes: dict[str, dict] = {}
+    root = None
+    for art in artifacts:
+        node = {
+            "id": str(art.id),
+            "filename": art.original_filename,
+            "sha256": art.sha256,
+            "mime": art.mime,
+            "size": art.size,
+            "depth": art.depth,
+            "origin_path": art.origin_path,
+            "extraction_source": art.extraction_source,
+            "archive_type": art.archive_type,
+            "extraction_note": art.extraction_note,
+            "verdict": art.verdict,
+            "score": art.score,
+            "job_id": str(art.job_id) if art.job_id else None,
+            "children": [],
+        }
+        nodes[str(art.id)] = node
+        if art.parent_id and str(art.parent_id) in nodes:
+            nodes[str(art.parent_id)]["children"].append(node)
+        if art.depth == 0:
+            root = node
+
+    return root
+
+
+async def _count_pending_descendants(root_job_id: str, db: AsyncSession) -> int:
+    """Count descendant jobs that are not in terminal status."""
+    from uuid import UUID
+
+    stmt = text(
+        """
+        WITH RECURSIVE descendants AS (
+            SELECT id, status
+            FROM jobs
+            WHERE parent_job_id = :root_job_id
+            UNION ALL
+            SELECT j.id, j.status
+            FROM jobs j
+            JOIN descendants d ON j.parent_job_id = d.id
+        )
+        SELECT COUNT(*) AS pending_count
+        FROM descendants
+        WHERE status NOT IN ('done', 'failed')
+        """
+    )
+    result = await db.execute(stmt, {"root_job_id": UUID(root_job_id)})
+    return int(result.scalar() or 0)
+
+
 @router.get("/reports/{job_id}", response_model=ReportResponse)
 async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """
@@ -539,6 +607,16 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     if job.result is None:
         raise HTTPException(status_code=404, detail="Report not available yet")
 
+    pending_descendants = await _count_pending_descendants(str(job.id), db)
+    if pending_descendants > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Report not ready. "
+                f"Waiting for {pending_descendants} descendant job(s) to finish."
+            ),
+        )
+
     # Format child jobs summary
     child_jobs = []
     for sub in job.sub_jobs:
@@ -560,5 +638,10 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     # Return stored result with created_at and child_jobs
     report = dict(job.result)
     report["created_at"] = job.created_at.isoformat()
+    report["parent_job_id"] = str(job.parent_job_id) if job.parent_job_id else None
     report["child_jobs"] = child_jobs
+
+    # Build artifact tree (returns None for non-archive files)
+    report["artifact_tree"] = await _build_artifact_tree(str(job.id), db)
+
     return report

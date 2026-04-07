@@ -60,6 +60,14 @@ class Job(Base):
     completed_sub: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     malicious_sub: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Artifact linkage (added by recursive-extraction feature)
+    artifact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
     file: Mapped["File"] = relationship("File", back_populates="jobs")  # noqa: F821
     parent: Mapped["Job | None"] = relationship(

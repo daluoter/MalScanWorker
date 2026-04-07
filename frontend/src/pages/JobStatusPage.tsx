@@ -227,13 +227,25 @@ export default function JobStatusPage() {
             </div>
 
             {/* Back Link */}
-            <Link
-                to="/"
-                className="inline-flex items-center gap-2 mt-6 text-sm font-mono text-slate-400 hover:text-neon-cyan transition-colors"
-            >
-                <span>←</span>
-                <span>返回上傳</span>
-            </Link>
+            <div className="mt-6 flex flex-col gap-2">
+                {job.parent_job_id && (
+                    <Link
+                        to={`/jobs/${job.parent_job_id}`}
+                        className="inline-flex items-center gap-2 text-sm font-mono text-neon-cyan hover:text-neon-purple transition-colors"
+                    >
+                        <span>←</span>
+                        <span>返回上一層分析</span>
+                    </Link>
+                )}
+
+                <Link
+                    to="/"
+                    className="inline-flex items-center gap-2 text-sm font-mono text-slate-400 hover:text-neon-cyan transition-colors"
+                >
+                    <span>←</span>
+                    <span>返回上傳</span>
+                </Link>
+            </div>
         </div>
     )
 }

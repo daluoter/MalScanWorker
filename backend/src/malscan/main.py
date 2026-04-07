@@ -4,6 +4,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy import text
 
 from malscan.api.routes import router
 from malscan.config import get_settings
@@ -68,6 +69,55 @@ async def readiness_check() -> dict[str, str]:
     return {"status": "ready"}
 
 
+async def _ensure_schema_compatibility(conn) -> None:
+    has_artifact_id = (
+        await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'jobs'
+                  AND column_name = 'artifact_id'
+                """
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not has_artifact_id:
+        await conn.execute(text("ALTER TABLE jobs ADD COLUMN artifact_id UUID"))
+        log.warning("schema_repair_applied", change="jobs.artifact_id column added")
+
+    has_artifact_fk = (
+        await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'jobs_artifact_id_fkey'
+                  AND conrelid = 'jobs'::regclass
+                """
+            )
+        )
+    ).scalar_one_or_none()
+
+    if not has_artifact_fk:
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE jobs
+                ADD CONSTRAINT jobs_artifact_id_fkey
+                FOREIGN KEY (artifact_id)
+                REFERENCES artifacts(id)
+                ON DELETE SET NULL
+                """
+            )
+        )
+        log.warning("schema_repair_applied", change="jobs.artifact_id FK added")
+
+    await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_artifact_id ON jobs (artifact_id)"))
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     """Application startup."""
@@ -100,6 +150,7 @@ async def startup_event() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_schema_compatibility(conn)
     log.info("database_tables_ready")
 
 

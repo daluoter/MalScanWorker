@@ -15,6 +15,7 @@ export interface JobProgress {
 
 export interface JobStatus {
     job_id: string
+    parent_job_id?: string | null
     status: 'queued' | 'scanning' | 'password_required' | 'done' | 'failed'
     progress: JobProgress
     updated_at: string
@@ -66,6 +67,7 @@ export interface StageTiming {
 
 export interface Report {
     job_id: string
+    parent_job_id?: string | null
     file: FileMetadata
     verdict: string
     score: number

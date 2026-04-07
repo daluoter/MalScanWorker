@@ -163,10 +163,30 @@ class ChildJobSummary(BaseModel):
     verdict: str | None = None
 
 
+class ArtifactTreeNode(BaseModel):
+    """A node in the artifact extraction tree."""
+
+    id: str
+    filename: str
+    sha256: str
+    mime: str | None = None
+    size: int
+    depth: int
+    origin_path: str | None = None
+    extraction_source: str | None = None
+    archive_type: str | None = None
+    extraction_note: str | None = None
+    verdict: str | None = None
+    score: int | None = None
+    job_id: str | None = None
+    children: list["ArtifactTreeNode"] = []
+
+
 class ReportResponse(BaseModel):
     """Response for GET /reports/{job_id}."""
 
     job_id: str
+    parent_job_id: str | None = None
     file: FileMetadata
     verdict: str
     score: int
@@ -174,6 +194,7 @@ class ReportResponse(BaseModel):
     timings: Timings
     created_at: datetime
     child_jobs: list[ChildJobSummary] = []
+    artifact_tree: ArtifactTreeNode | None = None
 
 
 class ApiError(BaseModel):

@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     stage_timeout_seconds: int = 300
     stages_total: int = 5
 
+    # Extraction limits (depth controlled by existing max_job_depth)
+    extraction_max_files: int = 100
+    extraction_max_bytes: int = 500_000_000  # 500MB total
+    extraction_max_single_bytes: int = 100_000_000  # 100MB per file
+    extraction_max_ratio: float = 100.0
+    extraction_timeout: int = 120  # seconds
+
     # YARA
     yara_rules_path: str = "/etc/yara/rules"
 
