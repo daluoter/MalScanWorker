@@ -22,6 +22,7 @@ from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
+from malscan_worker.stages.document_analysis import DocumentAnalysisStage
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
 from malscan_worker.stages.sandbox import SandboxStage
@@ -43,8 +44,10 @@ PARALLEL_STAGES = [
 # Stages that should run sequentially
 # ArchiveExtractStage MUST be here because it writes to the DB,
 # and AsyncSession is not concurrency-safe.
+# DocumentAnalysisStage also creates sub-jobs for extracted artifacts.
 SEQUENTIAL_STAGES = [
     ArchiveExtractStage(),
+    DocumentAnalysisStage(),
     SandboxStage(),
 ]
 
@@ -88,6 +91,81 @@ def _build_analysis_result(
         verdict = "suspicious" if verdict == "clean" else verdict
         score = max(score, 50 + len(yara_matches) * 10)
 
+    # ------------------------------------------------------------------
+    # Document analysis scoring
+    # ------------------------------------------------------------------
+    doc = stage_findings.get("document-analysis", {})
+    exploit_indicators = doc.get("exploit_indicators", [])
+    macros = doc.get("macros", {})
+    embedded_objects = doc.get("embedded_objects", [])
+    suspicious_keywords = doc.get("suspicious_keywords", [])
+
+    # Exploit indicators — each one adds significant risk
+    if exploit_indicators:
+        # Any Equation Editor or CVE indicator → very high risk
+        has_equation = any(
+            "equation_editor" in ind.get("type", "") or ind.get("cves")
+            for ind in exploit_indicators
+        )
+        has_external_template = any(
+            ind.get("type") in ("external_template", "external_relationship")
+            for ind in exploit_indicators
+        )
+        has_dde = any(ind.get("type") == "dde_field" for ind in exploit_indicators)
+        has_dangerous_class = any(
+            ind.get("type") == "dangerous_ole_class" for ind in exploit_indicators
+        )
+
+        if has_equation:
+            verdict = "malicious"
+            score = max(score, 85)
+        if has_external_template:
+            # External template injection is a strong exploit signal
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 70)
+        if has_dde:
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 60)
+        if has_dangerous_class:
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 55)
+
+        # General: each exploit indicator beyond the first adds 5 pts
+        extra = max(0, len(exploit_indicators) - 1) * 5
+        score = max(score, 50 + extra)
+        if verdict == "clean":
+            verdict = "suspicious"
+
+    # Macros with auto-exec + suspicious keywords → elevated risk
+    if macros.get("found"):
+        if macros.get("auto_exec") and macros.get("suspicious"):
+            # Auto-executing macros with suspicious API calls
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 65 + min(len(suspicious_keywords), 10) * 2)
+        elif macros.get("auto_exec"):
+            # Auto-exec but no obviously suspicious keywords
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 45)
+        elif macros.get("suspicious"):
+            # Suspicious keywords but no auto-exec
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 40)
+        else:
+            # Macros exist but seem benign
+            score = max(score, 15)
+
+    # Embedded objects count — more objects = higher suspicion
+    if len(embedded_objects) > 3:
+        score = max(score, 30 + len(embedded_objects) * 2)
+        if verdict == "clean":
+            verdict = "suspicious"
+
     # Build file info
     filetype = stage_findings.get("file-type", {})
     file_info = {
@@ -110,6 +188,31 @@ def _build_analysis_result(
             "sha256": ctx.sha256,
         },
     }
+
+    # Build document analysis summary for report
+    doc_analysis: dict[str, Any] = {}
+    if doc:
+        doc_analysis = {
+            "document_type": doc.get("document_type"),
+            "exploit_indicators": exploit_indicators,
+            "macros": macros,
+            "embedded_objects_count": len(embedded_objects),
+            "embedded_objects": embedded_objects[:20],  # cap for report size
+            "extracted_artifacts_count": len(doc.get("extracted_artifacts", [])),
+            "extracted_artifacts": [
+                {
+                    "filename": a.get("filename"),
+                    "sha256": a.get("sha256"),
+                    "size": a.get("size"),
+                    "source": a.get("source"),
+                }
+                for a in doc.get("extracted_artifacts", [])
+            ],
+            "suspicious_keywords": suspicious_keywords,
+            "sub_jobs_created": doc.get("sub_jobs_created", 0),
+            "parser_findings": doc.get("parser_findings", [])[:50],
+            "errors": doc.get("errors", []),
+        }
 
     # Build timing info
     timings = {
@@ -137,6 +240,7 @@ def _build_analysis_result(
             },
             "yara_hits": yara_matches,
             "iocs": iocs,
+            "document_analysis": doc_analysis,
             "sandbox": stage_findings.get("sandbox", {}),
             "archive_extract": stage_findings.get("archive-extract", {}),
         },
