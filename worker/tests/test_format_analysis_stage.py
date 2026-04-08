@@ -26,9 +26,12 @@ class _FakeRegistry:
 class _FakeSubmitter:
     def __init__(self) -> None:
         self.calls = 0
+        self.raise_on_submit = False
 
     async def submit_subjob(self, **kwargs: Any) -> str:
         del kwargs
+        if self.raise_on_submit:
+            raise RuntimeError("submit boom")
         self.calls += 1
         return f"subjob-{self.calls}"
 
@@ -231,3 +234,233 @@ async def test_analyzer_exception_returns_failed(
     assert result.status == "failed"
     assert result.error is not None
     assert "boom" in result.error
+
+
+@pytest.mark.asyncio
+async def test_submit_subjob_exception_recorded_and_stage_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[{"path": str(artifact_path), "filename": "child.bin"}],
+            )
+
+    fake_submitter = _FakeSubmitter()
+    fake_submitter.raise_on_submit = True
+
+    async def _fake_get_submitter() -> _FakeSubmitter:
+        return fake_submitter
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        del kwargs
+        return {"id": "artifact-1"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(_ctx(tmp_path, with_job=True))
+
+    assert result.status == "ok"
+    assert result.findings["sub_jobs_created"] == 0
+    assert any("sub-job submit failed" in e for e in result.findings["errors"])
+
+
+@pytest.mark.asyncio
+async def test_create_artifact_exception_in_submit_path_recorded_and_stage_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[{"path": str(artifact_path), "filename": "child.bin"}],
+            )
+
+    fake_submitter = _FakeSubmitter()
+
+    async def _fake_get_submitter() -> _FakeSubmitter:
+        return fake_submitter
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        del kwargs
+        raise RuntimeError("artifact create boom")
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+    ctx.root_artifact_id = "root-id"
+    ctx.artifact_id = "parent-id"
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert any("artifact create boom" in e for e in result.findings["errors"])
+
+
+@pytest.mark.asyncio
+async def test_cycle_detected_artifact_skipped_no_subjob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+    artifact_sha = "b" * 64
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[
+                    {"path": str(artifact_path), "filename": "child.bin", "sha256": artifact_sha}
+                ],
+            )
+
+    fake_submitter = _FakeSubmitter()
+
+    async def _fake_get_submitter() -> _FakeSubmitter:
+        return fake_submitter
+
+    created: list[dict[str, Any]] = []
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        created.append(kwargs)
+        return {"id": "artifact-1"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+    ctx.root_artifact_id = "root-id"
+    ctx.artifact_id = "parent-id"
+    ctx.ancestor_hashes = {artifact_sha}
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert result.findings["sub_jobs_created"] == 0
+    assert fake_submitter.calls == 0
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_within_extraction_skips_second_duplicate_subjob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_one = tmp_path / "child-1.bin"
+    artifact_two = tmp_path / "child-2.bin"
+    artifact_one.write_bytes(b"same")
+    artifact_two.write_bytes(b"same")
+    shared_sha = "c" * 64
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[
+                    {
+                        "path": str(artifact_one),
+                        "filename": "child-1.bin",
+                        "sha256": shared_sha,
+                    },
+                    {
+                        "path": str(artifact_two),
+                        "filename": "child-2.bin",
+                        "sha256": shared_sha,
+                    },
+                ],
+            )
+
+    fake_submitter = _FakeSubmitter()
+
+    async def _fake_get_submitter() -> _FakeSubmitter:
+        return fake_submitter
+
+    created: list[dict[str, Any]] = []
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        created.append(kwargs)
+        return {"id": f"artifact-{len(created)}"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+    ctx.root_artifact_id = "root-id"
+    ctx.artifact_id = "parent-id"
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert result.findings["sub_jobs_created"] == 1
+    assert fake_submitter.calls == 1
+    assert len(created) == 2
+    assert created[1]["verdict"] == "skipped"
+    assert created[1]["extraction_note"] == "duplicate_within_extraction"

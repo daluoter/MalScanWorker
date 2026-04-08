@@ -56,12 +56,21 @@ class FormatAnalysisStage(Stage):
         errors = list(analysis.errors)
 
         if analysis.extracted_artifacts and ctx.job:
-            sub_jobs_created, artifact_ids, submit_errors = await self._submit_artifacts(
-                ctx,
-                analysis.extracted_artifacts,
-                analysis.analyzer_name or analyzer.name,
-            )
-            errors.extend(submit_errors)
+            try:
+                sub_jobs_created, artifact_ids, submit_errors = await self._submit_artifacts(
+                    ctx,
+                    analysis.extracted_artifacts,
+                    analysis.analyzer_name or analyzer.name,
+                )
+                errors.extend(submit_errors)
+            except Exception as exc:
+                log.error(
+                    "format_analysis_artifact_submission_failed",
+                    job_id=ctx.job_id,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                errors.append(f"artifact submission failed: {exc}")
 
         findings = {
             "analyzer": analysis.analyzer_name or analyzer.name,
@@ -123,7 +132,7 @@ class FormatAnalysisStage(Stage):
             root_artifact_id = root_art["id"]
             parent_artifact_id = root_artifact_id
 
-        submitter = await InternalJobSubmitter.get_instance()
+        submitter: InternalJobSubmitter | None = None
 
         for art in artifacts:
             art_path_raw = art.get("path", "")
@@ -136,8 +145,7 @@ class FormatAnalysisStage(Stage):
 
             file_sha256 = str(art.get("sha256", "")).strip()
             if not file_sha256:
-                with art_path.open("rb") as handle:
-                    file_sha256 = hashlib.sha256(handle.read()).hexdigest()
+                file_sha256 = self._hash_file_sha256(art_path)
 
             if file_sha256 in ancestor_hashes:
                 log.warning("format_analysis_cycle_detected", sha256=file_sha256, job_id=ctx.job_id)
@@ -170,6 +178,9 @@ class FormatAnalysisStage(Stage):
                 continue
 
             try:
+                if submitter is None:
+                    submitter = await InternalJobSubmitter.get_instance()
+
                 sub_job_id = await submitter.submit_subjob(
                     file_path=str(art_path),
                     filename=filename,
@@ -194,6 +205,17 @@ class FormatAnalysisStage(Stage):
                 errors.append(f"sub-job submit failed for {filename}: {exc}")
 
         return submitted, created_ids, errors
+
+    @staticmethod
+    def _hash_file_sha256(file_path: Path) -> str:
+        hasher = hashlib.sha256()
+        with file_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+        return hasher.hexdigest()
 
     def _result(
         self,
