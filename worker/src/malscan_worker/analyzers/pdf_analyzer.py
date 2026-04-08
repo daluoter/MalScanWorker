@@ -38,6 +38,9 @@ _FILTER_NAME_RE = re.compile(
     rb"/(FlateDecode|LZWDecode|ASCII85Decode|ASCIIHexDecode|RunLengthDecode|CCITTFaxDecode|DCTDecode|JPXDecode|JBIG2Decode|Crypt)\b",
     re.IGNORECASE,
 )
+_ACTION_JAVASCRIPT_RE = re.compile(rb"/S\s*/JavaScript\b")
+_ACTION_LAUNCH_RE = re.compile(rb"/S\s*/Launch\b")
+_OPEN_ACTION_RE = re.compile(rb"/OpenAction\b")
 
 _SUSPICIOUS_URI_PREFIXES = (
     "javascript:",
@@ -100,7 +103,7 @@ class PDFAnalyzer(FormatAnalyzer):
             result.features = features
             return result
 
-        self._scan_raw_features(raw, features)
+        self._scan_raw_features(raw, features, include_action_tokens=False)
 
         parser_ok = False
         try:
@@ -109,6 +112,7 @@ class PDFAnalyzer(FormatAnalyzer):
             parser_ok = True
         except Exception as exc:
             result.errors.append(f"failed to parse PDF file: {exc}")
+            self._scan_raw_features(raw, features, include_action_tokens=True)
 
         indicators = self._build_indicators(features)
         result.features = features
@@ -169,27 +173,8 @@ class PDFAnalyzer(FormatAnalyzer):
         if not isinstance(embedded, dict):
             return
 
-        names_array = self._resolve_indirect(embedded.get("/Names"))
-        if not isinstance(names_array, list):
-            return
-
         embedded_files = self._as_list(features["embedded_files"])
-        for index in range(0, len(names_array), 2):
-            name_obj = names_array[index]
-            file_spec = names_array[index + 1] if index + 1 < len(names_array) else None
-            filename = self._stringify(name_obj)
-            file_spec_obj = self._resolve_indirect(file_spec)
-
-            file_meta: dict[str, JsonValue] = {"name": filename}
-            if isinstance(file_spec_obj, dict):
-                fs_name = self._stringify(file_spec_obj.get("/F"))
-                if fs_name:
-                    file_meta["name"] = fs_name
-                    filename = fs_name
-
-            embedded_files.append(file_meta)
-            if filename.lower().endswith(_EXECUTABLE_SUFFIXES):
-                file_meta["executable"] = True
+        self._collect_embedded_files(embedded, embedded_files, set())
 
         features["embedded_files"] = embedded_files
 
@@ -258,7 +243,13 @@ class PDFAnalyzer(FormatAnalyzer):
             names.append("/GoToR")
             features["suspicious_names"] = self._dedupe_strings(names)
 
-    def _scan_raw_features(self, raw: bytes, features: dict[str, JsonValue]) -> None:
+    def _scan_raw_features(
+        self,
+        raw: bytes,
+        features: dict[str, JsonValue],
+        *,
+        include_action_tokens: bool,
+    ) -> None:
         text_l = raw.decode("latin-1", errors="ignore")
 
         version_match = re.search(r"%PDF-(\d\.\d)", text_l)
@@ -278,25 +269,26 @@ class PDFAnalyzer(FormatAnalyzer):
             "has_object_stream": "/ObjStm" in text_l,
         }
 
-        if "/JavaScript" in text_l or "/JS" in text_l:
-            js_code = self._as_list(features["js_code"])
-            if not js_code:
-                js_code.append("javascript-token")
-            features["js_code"] = self._dedupe_strings(js_code)
+        if include_action_tokens:
+            if _ACTION_JAVASCRIPT_RE.search(raw):
+                js_code = self._as_list(features["js_code"])
+                if not js_code:
+                    js_code.append("javascript-action-token")
+                features["js_code"] = self._dedupe_strings(js_code)
 
-        if "/Launch" in text_l:
-            launch_actions = self._as_list(features["launch_actions"])
-            launch_actions.append("/Launch")
-            features["launch_actions"] = self._dedupe_strings(launch_actions)
+            if _ACTION_LAUNCH_RE.search(raw):
+                launch_actions = self._as_list(features["launch_actions"])
+                launch_actions.append("/Launch")
+                features["launch_actions"] = self._dedupe_strings(launch_actions)
 
-        if "/OpenAction" in text_l:
-            open_actions = self._as_list(features["open_actions"])
-            open_actions.append("/OpenAction")
-            features["open_actions"] = self._dedupe_strings(open_actions)
+            if _OPEN_ACTION_RE.search(raw):
+                open_actions = self._as_list(features["open_actions"])
+                open_actions.append("/OpenAction")
+                features["open_actions"] = self._dedupe_strings(open_actions)
 
-        uri_actions = self._as_list(features["uri_actions"])
-        uri_actions.extend(re.findall(r"/URI\s*\(([^)]*)\)", text_l))
-        features["uri_actions"] = self._dedupe_strings(uri_actions)
+            uri_actions = self._as_list(features["uri_actions"])
+            uri_actions.extend(re.findall(r"/URI\s*\(([^)]*)\)", text_l))
+            features["uri_actions"] = self._dedupe_strings(uri_actions)
 
         obfuscated_names = [
             "/" + match.decode("ascii", errors="ignore")
@@ -455,6 +447,55 @@ class PDFAnalyzer(FormatAnalyzer):
             severity = str(indicator.get("severity", ""))
             score += _SEVERITY_WEIGHTS.get(severity, 0)
         return min(score, 100)
+
+    def _collect_embedded_files(
+        self,
+        node: Any,
+        embedded_files: list[JsonValue],
+        visited: set[int],
+    ) -> None:
+        resolved = self._resolve_indirect(node)
+        if not isinstance(resolved, dict):
+            return
+
+        node_id = id(resolved)
+        if node_id in visited:
+            return
+        visited.add(node_id)
+
+        names_array = self._resolve_indirect(resolved.get("/Names"))
+        if isinstance(names_array, list):
+            self._collect_names_array(names_array, embedded_files)
+
+        kids = self._resolve_indirect(resolved.get("/Kids"))
+        if not isinstance(kids, list):
+            return
+
+        for kid in kids:
+            self._collect_embedded_files(kid, embedded_files, visited)
+
+    def _collect_names_array(
+        self,
+        names_array: list[Any],
+        embedded_files: list[JsonValue],
+    ) -> None:
+        for index in range(0, len(names_array), 2):
+            name_obj = names_array[index]
+            file_spec = names_array[index + 1] if index + 1 < len(names_array) else None
+            filename = self._stringify(name_obj)
+            file_spec_obj = self._resolve_indirect(file_spec)
+
+            file_meta: dict[str, JsonValue] = {"name": filename}
+            if isinstance(file_spec_obj, dict):
+                fs_name = self._stringify(file_spec_obj.get("/F"))
+                if fs_name:
+                    file_meta["name"] = fs_name
+                    filename = fs_name
+
+            if filename.lower().endswith(_EXECUTABLE_SUFFIXES):
+                file_meta["executable"] = True
+
+            embedded_files.append(file_meta)
 
     @staticmethod
     def _resolve_indirect(value: Any) -> Any:

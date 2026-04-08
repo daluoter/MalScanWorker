@@ -193,3 +193,114 @@ async def test_launch_action_indicator_path(
     indicators = {str(ind["type"]): ind for ind in result.indicators}
     assert "launch_action" in indicators
     assert str(indicators["launch_action"]["severity"]) == "critical"
+
+
+@pytest.mark.asyncio
+async def test_embedded_files_from_kids_name_tree_sets_executable_indicator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "embedded-kids.pdf"
+    file_path.write_bytes(b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+
+    class _ReaderWithEmbeddedKids:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.pdf_header = "%PDF-1.7"
+            self.pages: list[dict[str, Any]] = []
+            self.is_encrypted = False
+            self.trailer = {
+                "/Root": {
+                    "/Names": {
+                        "/EmbeddedFiles": {
+                            "/Kids": [
+                                {
+                                    "/Names": [
+                                        "dropper",
+                                        {
+                                            "/F": "payload.exe",
+                                        },
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+
+        def get_fields(self) -> dict[str, Any]:
+            return {}
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pdf_analyzer.PdfReader",
+        _ReaderWithEmbeddedKids,
+    )
+
+    analyzer = PDFAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicators = {str(ind["type"]) for ind in result.indicators}
+    embedded_files = result.features["embedded_files"]
+    assert isinstance(embedded_files, list)
+    assert embedded_files
+    first_item = embedded_files[0]
+    assert isinstance(first_item, dict)
+    assert first_item.get("name") == "payload.exe"
+    assert first_item.get("executable") is True
+    assert "embedded_file_executable" in indicators
+
+
+@pytest.mark.asyncio
+async def test_bare_js_token_does_not_raise_js_indicator_when_parse_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "bare-js.pdf"
+    file_path.write_bytes(b"%PDF-1.7\n1 0 obj\n<< /JS (noop) >>\nendobj\n%%EOF\n")
+
+    class _ReaderWithoutJsAction:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.pdf_header = "%PDF-1.7"
+            self.pages: list[dict[str, Any]] = []
+            self.is_encrypted = False
+            self.trailer: dict[str, Any] = {"/Root": {}}
+
+        def get_fields(self) -> dict[str, Any]:
+            return {}
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pdf_analyzer.PdfReader",
+        _ReaderWithoutJsAction,
+    )
+
+    analyzer = PDFAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "embedded_javascript" not in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_parse_failure_fallback_detects_js_launch_and_open_tokens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "fallback-tokens.pdf"
+    file_path.write_bytes(
+        b"%PDF-1.7\n1 0 obj\n"
+        b"<< /OpenAction << /S /Launch /F (cmd.exe) >> /S /JavaScript /JS (evil) >>\n"
+        b"endobj\n%%EOF\n"
+    )
+
+    class _FailingReader:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise ValueError("parser failed")
+
+    monkeypatch.setattr("malscan_worker.analyzers.pdf_analyzer.PdfReader", _FailingReader)
+
+    analyzer = PDFAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "embedded_javascript" in indicator_types
+    assert "auto_open_action" in indicator_types
+    assert "launch_action" in indicator_types
