@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 _MAX_ANALYSIS_BYTES = 1024 * 1024
 _PRINTABLE_THRESHOLD = 0.85
+_UTF16_BOM_LE = b"\xff\xfe"
+_UTF16_BOM_BE = b"\xfe\xff"
 
 _SEVERITY_WEIGHTS = {
     "critical": 25,
@@ -299,11 +301,46 @@ class ScriptAnalyzer(FormatAnalyzer):
 
     @staticmethod
     def _decode_text(raw: bytes) -> str | None:
+        if not raw:
+            return ""
+
+        if raw.startswith(_UTF16_BOM_LE) or raw.startswith(_UTF16_BOM_BE):
+            try:
+                return raw.decode("utf-16")
+            except UnicodeDecodeError:
+                return None
+
+        likely_utf16 = ScriptAnalyzer._sniff_utf16_encoding(raw)
+        if likely_utf16 is not None:
+            try:
+                return raw.decode(likely_utf16)
+            except UnicodeDecodeError:
+                return None
+
         for encoding in ("utf-8", "latin-1"):
             try:
                 return raw.decode(encoding)
             except UnicodeDecodeError:
                 continue
+        return None
+
+    @staticmethod
+    def _sniff_utf16_encoding(raw: bytes) -> str | None:
+        sample = raw[:512]
+        if len(sample) < 4:
+            return None
+
+        even_nuls = sum(1 for idx in range(0, len(sample), 2) if sample[idx] == 0)
+        odd_nuls = sum(1 for idx in range(1, len(sample), 2) if sample[idx] == 0)
+        half = len(sample) // 2
+        if half == 0:
+            return None
+
+        # Typical ASCII-heavy UTF-16 text has nuls in one lane.
+        if odd_nuls / half >= 0.3 and even_nuls / half <= 0.05:
+            return "utf-16le"
+        if even_nuls / half >= 0.3 and odd_nuls / half <= 0.05:
+            return "utf-16be"
         return None
 
     @staticmethod

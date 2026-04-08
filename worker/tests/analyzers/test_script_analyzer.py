@@ -67,6 +67,17 @@ def test_can_handle_content_sniff_path_for_untyped_file(tmp_path: Path) -> None:
     assert analyzer.can_handle(file_path, "application/octet-stream", b"\n") is True
 
 
+def test_can_handle_utf16le_bom_powershell(tmp_path: Path) -> None:
+    file_path = tmp_path / "utf16.ps1"
+    content = "Write-Host 'ok'\nStart-Sleep 1\n"
+    raw = content.encode("utf-16")
+    file_path.write_bytes(raw)
+
+    analyzer = ScriptAnalyzer()
+
+    assert analyzer.can_handle(file_path, "text/plain", raw[:32]) is True
+
+
 def test_can_handle_rejects_binary_and_non_script(tmp_path: Path) -> None:
     binary_path = tmp_path / "blob.bin"
     binary_path.write_bytes(b"\x00\x89\x90\x81\x00\x00\xff\x10")
@@ -98,6 +109,22 @@ async def test_analyze_simple_powershell(tmp_path: Path) -> None:
     assert isinstance(result.features["obfuscation_score"], int)
     indicator_types = {str(ind["type"]) for ind in result.indicators}
     assert "sleep_or_delay" in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_analyze_utf16_powershell_basic_features(tmp_path: Path) -> None:
+    file_path = tmp_path / "utf16-basic.ps1"
+    content = "Write-Host 'ok'\nStart-Sleep 2\n"
+    file_path.write_bytes(content.encode("utf-16"))
+
+    analyzer = ScriptAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert result.errors == []
+    assert result.features["script_type"] == "powershell"
+    assert result.features["line_count"] == 2
+    obf = result.features["obfuscation_score"]
+    assert isinstance(obf, int)
 
 
 @pytest.mark.asyncio
