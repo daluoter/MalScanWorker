@@ -221,3 +221,33 @@ async def test_indicator_severity_mapping_and_risk_score(
 
     assert severities["unknown_indicator"] == "medium"
     assert result.risk_score == 100
+
+
+@pytest.mark.asyncio
+async def test_analyze_uses_passed_file_path_over_ctx_file_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provided_file = tmp_path / "provided.doc"
+    ctx_file = tmp_path / "ctx.doc"
+    provided_file.write_bytes(b"doc")
+    ctx_file.write_bytes(b"doc")
+
+    seen_file_path: Path | None = None
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        nonlocal seen_file_path
+        del self
+        seen_file_path = ctx.file_path
+        return _stage_result("ok", {"document_type": "ole"})
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    ctx = _ctx(ctx_file)
+    await adapter.analyze(provided_file, ctx)
+
+    assert seen_file_path == provided_file

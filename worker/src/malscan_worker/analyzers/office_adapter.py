@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +35,8 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
         return True
 
     async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
-        del file_path
-        stage_result = await DocumentAnalysisStage().execute(ctx)
+        stage_ctx = replace(ctx, file_path=file_path)
+        stage_result = await DocumentAnalysisStage().execute(stage_ctx)
         findings = stage_result.findings
 
         raw_indicators = findings.get("exploit_indicators", [])
@@ -52,6 +53,7 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
             errors = []
         if stage_result.error:
             errors = [*errors, stage_result.error]
+        errors = self._unique_strings(errors)
 
         extracted_artifacts = findings.get("extracted_artifacts", [])
         if not isinstance(extracted_artifacts, list):
@@ -83,10 +85,26 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
             features=features,
             extracted_strings=[str(item) for item in suspicious_keywords],
             risk_score=self._calculate_risk_score(indicators),
-            risk_factors=[str(indicator.get("type", "")) for indicator in indicators],
-            errors=[str(item) for item in errors],
+            risk_factors=[
+                factor
+                for factor in (str(indicator.get("type", "")) for indicator in indicators)
+                if factor
+            ],
+            errors=errors,
             extracted_artifacts=extracted_artifacts,
         )
+
+    @staticmethod
+    def _unique_strings(values: list[object]) -> list[str]:
+        seen: set[str] = set()
+        unique: list[str] = []
+        for value in values:
+            item = str(value)
+            if item in seen:
+                continue
+            seen.add(item)
+            unique.append(item)
+        return unique
 
     def _convert_indicators(self, raw_indicators: object) -> list[AnalyzerIndicator]:
         if not isinstance(raw_indicators, list):
