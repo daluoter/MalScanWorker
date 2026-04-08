@@ -60,7 +60,9 @@ async def test_run_pipeline_success(mocker, tmp_path):
         return_value=test_file,
     )
     mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
-    mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
+    update_job_stage = mocker.patch(
+        "malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock
+    )
     mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
     mocker.patch(
         "malscan_worker.pipeline.get_job_for_context",
@@ -72,6 +74,7 @@ async def test_run_pipeline_success(mocker, tmp_path):
     # Replace STAGES with mock stages
     mock_stages = [MockStage("stage1"), MockStage("stage2")]
     mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.FORMAT_ANALYSIS_STAGE", MockStage("format-analysis"))
     mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
     job_id = str(uuid.uuid4())
@@ -87,7 +90,14 @@ async def test_run_pipeline_success(mocker, tmp_path):
     result = await run_pipeline(job_data)
 
     assert result["job_id"] == job_id
-    assert len(result["stages"]) == 2
+    assert len(result["stages"]) == 3
+    assert [stage["stage_name"] for stage in result["stages"]] == [
+        "stage1",
+        "stage2",
+        "format-analysis",
+    ]
+
+    assert update_job_stage.await_args_list[1].args == (job_id, "recursive_analysis", 3)
 
 
 @pytest.mark.asyncio
@@ -118,6 +128,7 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
     # Mock STAGES (second stage fails)
     mock_stages = [MockStage("stage1"), MockStage("stage2", should_fail=True)]
     mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", mock_stages)
+    mocker.patch("malscan_worker.pipeline.FORMAT_ANALYSIS_STAGE", MockStage("format-analysis"))
     mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
 
     job_id = str(uuid.uuid4())
@@ -137,3 +148,69 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
         stage["stage_name"] == "stage2" and stage["status"] == "failed"
         for stage in result["stages"]
     )
+
+
+def test_build_analysis_result_applies_format_scoring_and_reporting():
+    from malscan_worker.pipeline import _build_analysis_result
+
+    now = datetime.now(timezone.utc)
+    ctx = type("Ctx", (), {"sha256": "abc123", "original_filename": "sample.bin"})()
+    results = [
+        StageResult(
+            stage_name="file-type",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={"mime_type": "application/octet-stream", "file_size": 10},
+            artifacts=[],
+        ),
+        StageResult(
+            stage_name="clamav",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={"infected": False, "threat_name": None},
+            artifacts=[],
+        ),
+        StageResult(
+            stage_name="yara",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={"matches": []},
+            artifacts=[],
+        ),
+        StageResult(
+            stage_name="format-analysis",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={
+                "analyzer": "pe",
+                "format_type": "PE",
+                "risk_score": 37,
+                "risk_factors": ["packed"],
+                "indicators": [{"type": "suspicious_import", "severity": "high"}],
+                "features": {"entrypoint": 4096},
+            },
+            artifacts=[],
+        ),
+    ]
+
+    report = _build_analysis_result("job-1", "file-1", ctx, results, 123)
+
+    assert report["verdict"] == "suspicious"
+    assert report["score"] >= 60
+    assert report["score"] >= 37
+
+    format_report = report["results"]["format_analysis"]
+    assert format_report["analyzer"] == "pe"
+    assert format_report["format_type"] == "PE"
+    assert format_report["risk_score"] == 37
+    assert format_report["risk_factors"] == ["packed"]
+    assert format_report["indicators"][0]["severity"] == "high"
+    assert format_report["features"] == {"entrypoint": 4096}
