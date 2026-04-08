@@ -3,9 +3,31 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias, TypedDict
 
 from malscan_worker.stages.base import StageContext
+
+JsonScalar: TypeAlias = str | int | float | bool | None
+JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+class AnalyzerIndicator(TypedDict, total=False):
+    """Structured indicator emitted by analyzers."""
+
+    type: str
+    severity: str
+    detail: str
+    evidence: JsonValue
+
+
+class AnalyzerArtifact(TypedDict, total=False):
+    """Structured extracted artifact metadata for downstream submission."""
+
+    filename: str
+    sha256: str
+    size: int
+    path: str
+    source: str
 
 
 @dataclass
@@ -14,13 +36,13 @@ class AnalyzerResult:
 
     analyzer_name: str
     format_type: str
-    indicators: list[dict[str, Any]] = field(default_factory=list)
-    features: dict[str, Any] = field(default_factory=dict)
+    indicators: list[AnalyzerIndicator] = field(default_factory=list)
+    features: dict[str, JsonValue] = field(default_factory=dict)
     extracted_strings: list[str] = field(default_factory=list)
     risk_score: int = 0
     risk_factors: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-    extracted_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    extracted_artifacts: list[AnalyzerArtifact] = field(default_factory=list)
 
 
 class FormatAnalyzer(ABC):

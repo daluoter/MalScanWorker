@@ -1,9 +1,15 @@
 """Tests for FormatAnalyzer ABC and AnalyzerResult dataclass."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
-from malscan_worker.analyzers.base import AnalyzerResult, FormatAnalyzer
+from malscan_worker.analyzers.base import (
+    AnalyzerArtifact,
+    AnalyzerIndicator,
+    AnalyzerResult,
+    FormatAnalyzer,
+)
 from malscan_worker.stages.base import StageContext
 
 
@@ -25,30 +31,61 @@ class TestAnalyzerResult:
         assert result.extracted_artifacts == []
 
     def test_custom_fields(self) -> None:
+        indicator: AnalyzerIndicator = {
+            "type": "packer_detected",
+            "severity": "medium",
+            "detail": "UPX",
+        }
+        artifact: AnalyzerArtifact = {
+            "filename": "payload.bin",
+            "sha256": "abc",
+            "size": 100,
+            "path": "/tmp/x",
+            "source": "overlay",
+        }
+
         result = AnalyzerResult(
             analyzer_name="pe",
             format_type="PE/EXE",
-            indicators=[{"type": "packer_detected", "severity": "medium", "detail": "UPX"}],
+            indicators=[indicator],
             features={"is_dll": False},
             extracted_strings=["CreateRemoteThread"],
             risk_score=45,
             risk_factors=["Packer detected"],
             errors=[],
-            extracted_artifacts=[
-                {
-                    "filename": "payload.bin",
-                    "sha256": "abc",
-                    "size": 100,
-                    "path": "/tmp/x",
-                    "source": "overlay",
-                }
-            ],
+            extracted_artifacts=[artifact],
         )
 
         assert result.risk_score == 45
         assert len(result.indicators) == 1
         assert result.indicators[0]["severity"] == "medium"
         assert result.extracted_artifacts[0]["filename"] == "payload.bin"
+
+    def test_mutable_defaults_are_isolated(self) -> None:
+        first = AnalyzerResult(analyzer_name="one", format_type="TEST")
+        second = AnalyzerResult(analyzer_name="two", format_type="TEST")
+
+        first.indicators.append({"type": "x"})
+        first.features["flag"] = True
+        first.extracted_strings.append("abc")
+        first.risk_factors.append("factor")
+        first.errors.append("error")
+        first.extracted_artifacts.append(
+            {
+                "filename": "a.bin",
+                "sha256": "x",
+                "size": 1,
+                "path": "/tmp/a.bin",
+                "source": "test",
+            }
+        )
+
+        assert second.indicators == []
+        assert second.features == {}
+        assert second.extracted_strings == []
+        assert second.risk_factors == []
+        assert second.errors == []
+        assert second.extracted_artifacts == []
 
 
 class TestFormatAnalyzerABC:
@@ -75,3 +112,25 @@ class TestFormatAnalyzerABC:
         assert analyzer.name == "dummy"
         assert analyzer.can_handle(tmp_path / "f", "application/x-dummy", b"") is True
         assert analyzer.can_handle(tmp_path / "f", "text/plain", b"") is False
+
+    @pytest.mark.asyncio
+    async def test_concrete_subclass_analyze_is_awaitable(self, tmp_path: Path) -> None:
+        called = asyncio.Event()
+
+        class DummyAnalyzer(FormatAnalyzer):
+            @property
+            def name(self) -> str:
+                return "dummy"
+
+            def can_handle(self, file_path: Path, mime: str, magic: bytes) -> bool:
+                return True
+
+            async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+                called.set()
+                return AnalyzerResult(analyzer_name="dummy", format_type="DUMMY")
+
+        analyzer = DummyAnalyzer()
+        result = await analyzer.analyze(tmp_path / "f", None)
+
+        assert called.is_set()
+        assert result.analyzer_name == "dummy"
