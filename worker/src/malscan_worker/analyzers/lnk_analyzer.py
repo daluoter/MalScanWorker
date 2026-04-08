@@ -39,15 +39,24 @@ _SEVERITY_WEIGHTS = {
     "low": 3,
 }
 
-_SUSPICIOUS_TARGET_TOKENS = (
-    "powershell",
-    "pwsh",
+_SCRIPTING_ENGINE_TARGETS = {
     "cmd.exe",
-    "wscript",
-    "cscript",
-    "mshta",
+    "powershell.exe",
+    "mshta.exe",
+    "wscript.exe",
+    "cscript.exe",
     "rundll32",
+    "rundll32.exe",
     "regsvr32",
+    "regsvr32.exe",
+}
+
+_SUSPICIOUS_TARGET_LOCATION_TOKENS = (
+    "\\temp\\",
+    "\\appdata\\",
+    "\\$recycle.bin\\",
+    "\\downloads\\",
+    "\\users\\public\\",
 )
 
 _DOWNLOAD_TOKENS = (
@@ -65,7 +74,6 @@ _DOWNLOAD_TOKENS = (
 
 _SUSPICIOUS_WORKDIR_TOKENS = ("\\appdata\\", "\\temp", "\\programdata", "\\users\\public")
 
-_COMMAND_CHAIN_RE = re.compile(r"(&&|\|\||\||;)")
 _ENCODED_COMMAND_RE = re.compile(
     r"(?:^|\s)-(?:e|enc|encodedcommand)\s+([A-Za-z0-9+/=]{8,})", re.IGNORECASE
 )
@@ -182,6 +190,9 @@ class LNKAnalyzer(FormatAnalyzer):
         timestamps = self._extract_timestamps_from_parser(lnk_obj)
         if timestamps:
             extracted["timestamps"] = timestamps
+            extracted["creation_time"] = timestamps.get("created")
+            extracted["access_time"] = timestamps.get("accessed")
+            extracted["modification_time"] = timestamps.get("modified")
 
         return extracted, []
 
@@ -207,15 +218,21 @@ class LNKAnalyzer(FormatAnalyzer):
         file_size = struct.unpack_from("<I", raw, 52)[0]
         show_command = struct.unpack_from("<I", raw, 60)[0]
         hot_key = struct.unpack_from("<H", raw, 64)[0]
+        creation_time_iso = self._filetime_to_iso(creation_time)
+        access_time_iso = self._filetime_to_iso(access_time)
+        modification_time_iso = self._filetime_to_iso(write_time)
 
         return {
             "header_size": header_size,
             "header_valid": header_size == 0x4C and clsid == _LNK_CLSID,
             "file_attributes": file_attributes,
+            "creation_time": creation_time_iso,
+            "access_time": access_time_iso,
+            "modification_time": modification_time_iso,
             "timestamps": {
-                "created": self._filetime_to_iso(creation_time),
-                "accessed": self._filetime_to_iso(access_time),
-                "modified": self._filetime_to_iso(write_time),
+                "created": creation_time_iso,
+                "accessed": access_time_iso,
+                "modified": modification_time_iso,
             },
             "file_size": file_size,
             "show_command": show_command,
@@ -230,10 +247,11 @@ class LNKAnalyzer(FormatAnalyzer):
         return target or arguments
 
     def _decode_encoded_command(self, command_chain: str) -> str | None:
-        if not command_chain:
+        normalized_command = self._normalize_caret_obfuscation(command_chain)
+        if not normalized_command:
             return None
 
-        match = _ENCODED_COMMAND_RE.search(command_chain)
+        match = _ENCODED_COMMAND_RE.search(normalized_command)
         if not match:
             return None
 
@@ -260,8 +278,10 @@ class LNKAnalyzer(FormatAnalyzer):
         indicators: list[AnalyzerIndicator] = []
 
         command_chain = str(features.get("command_chain") or "")
-        command_chain_l = command_chain.lower()
         arguments = str(features.get("arguments") or "")
+        normalized_command_chain = self._normalize_caret_obfuscation(command_chain)
+        normalized_arguments = self._normalize_caret_obfuscation(arguments)
+        command_chain_l = normalized_command_chain.lower()
         target_path = str(features.get("target_path") or "")
         target_path_l = target_path.lower()
         working_dir = str(features.get("working_dir") or "")
@@ -279,7 +299,7 @@ class LNKAnalyzer(FormatAnalyzer):
                 }
             )
 
-        if _ENCODED_COMMAND_RE.search(command_chain):
+        if _ENCODED_COMMAND_RE.search(normalized_command_chain):
             evidence: dict[str, JsonValue] = {"command_chain": command_chain}
             if decoded_command:
                 evidence["decoded_command"] = decoded_command
@@ -292,19 +312,19 @@ class LNKAnalyzer(FormatAnalyzer):
                 }
             )
 
-        if _COMMAND_CHAIN_RE.search(command_chain):
+        if self._is_scripting_engine_with_arguments(target_path, normalized_arguments):
             indicators.append(
                 {
                     "type": "cmd_chain",
                     "severity": "critical",
-                    "detail": "Multiple shell command operators detected",
+                    "detail": "Scripting engine target invoked with command arguments",
                     "evidence": {"command_chain": command_chain},
                 }
             )
 
         show_command = features.get("show_command")
         hidden_tokens = ("-w hidden", "-windowstyle hidden", "start /min", " /b ")
-        if (isinstance(show_command, int) and show_command == 0) or any(
+        if (isinstance(show_command, int) and show_command in {0, 7}) or any(
             token in command_chain_l for token in hidden_tokens
         ):
             indicators.append(
@@ -332,12 +352,12 @@ class LNKAnalyzer(FormatAnalyzer):
                 }
             )
 
-        if any(token in target_path_l for token in _SUSPICIOUS_TARGET_TOKENS):
+        if any(token in target_path_l for token in _SUSPICIOUS_TARGET_LOCATION_TOKENS):
             indicators.append(
                 {
                     "type": "suspicious_target",
                     "severity": "high",
-                    "detail": "Target executable is commonly abused",
+                    "detail": "Target path is in a suspicious user-writable location",
                     "evidence": {"target_path": target_path},
                 }
             )
@@ -356,7 +376,7 @@ class LNKAnalyzer(FormatAnalyzer):
                 }
             )
 
-        if len(arguments) >= 260:
+        if len(arguments) > 500:
             indicators.append(
                 {
                     "type": "long_arguments",
@@ -366,7 +386,9 @@ class LNKAnalyzer(FormatAnalyzer):
                 }
             )
 
-        if any(_ENVVAR_RE.search(item) for item in (target_path, arguments, working_dir)):
+        if any(
+            _ENVVAR_RE.search(item) for item in (target_path, normalized_arguments, working_dir)
+        ):
             indicators.append(
                 {
                     "type": "environment_variable_abuse",
@@ -391,6 +413,20 @@ class LNKAnalyzer(FormatAnalyzer):
             )
 
         return indicators
+
+    @staticmethod
+    def _normalize_caret_obfuscation(value: str) -> str:
+        if not value:
+            return value
+        normalized = re.sub(r"\^(.)", r"\1", value)
+        return normalized.replace("^", "")
+
+    @staticmethod
+    def _is_scripting_engine_with_arguments(target_path: str, arguments: str) -> bool:
+        if not target_path or not arguments.strip():
+            return False
+        basename = target_path.lower().replace("/", "\\").rsplit("\\", 1)[-1]
+        return basename in _SCRIPTING_ENGINE_TARGETS
 
     def _calculate_risk_score(self, indicators: list[AnalyzerIndicator]) -> int:
         score = 0
@@ -515,6 +551,9 @@ class LNKAnalyzer(FormatAnalyzer):
                 "accessed": None,
                 "modified": None,
             },
+            "creation_time": None,
+            "access_time": None,
+            "modification_time": None,
             "file_size": file_size,
             "file_attributes": None,
             "show_command": None,

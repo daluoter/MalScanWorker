@@ -30,12 +30,18 @@ def _build_lnk_header(
     file_size: int = 0,
     show_command: int = 1,
     hot_key: int = 0,
+    creation_time: int = 0,
+    access_time: int = 0,
+    write_time: int = 0,
 ) -> bytes:
     header = bytearray(76)
     header[0:4] = struct.pack("<I", 0x4C)
     header[4:20] = _LNK_HEADER_CLSID
     header[20:24] = struct.pack("<I", 0)
     header[24:28] = struct.pack("<I", file_attributes)
+    header[28:36] = struct.pack("<Q", creation_time)
+    header[36:44] = struct.pack("<Q", access_time)
+    header[44:52] = struct.pack("<Q", write_time)
     header[52:56] = struct.pack("<I", file_size)
     header[60:64] = struct.pack("<I", show_command)
     header[64:66] = struct.pack("<H", hot_key)
@@ -115,6 +121,125 @@ async def test_indicator_logic_cmd_chain_encoded_and_hidden(
     assert "encoded_command" in types
     assert "hidden_execution" in types
     assert result.features.get("decoded_command") == "Write-Output PWNED"
+
+
+@pytest.mark.asyncio
+async def test_cmd_chain_with_scripting_engine_and_args_without_operators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "engine-args.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\cmd.exe"
+            self.arguments = r"/c whoami"
+            self.working_dir = r"C:\\Windows\\System32"
+            self.icon_location = ""
+            self.relative_path = ""
+            self.description = ""
+            self.network_path = ""
+            self.local_base_path = r"C:\\Windows\\System32"
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "cmd_chain" in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_hidden_execution_detected_for_show_command_7(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "show7.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=7))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\cmd.exe"
+            self.arguments = "/c echo ok"
+            self.show_command = 7
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicators = {str(ind["type"]): ind for ind in result.indicators}
+    assert "hidden_execution" in indicators
+    assert str(indicators["hidden_execution"]["severity"]) == "high"
+
+
+@pytest.mark.asyncio
+async def test_long_arguments_threshold_over_500(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "longargs.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+    long_args = "A" * 501
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\notepad.exe"
+            self.arguments = long_args
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "long_arguments" in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_suspicious_target_location_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "target-location.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Users\\alice\\Downloads\\viewer.exe"
+            self.arguments = ""
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "suspicious_target" in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_fallback_exposes_top_level_timestamps(tmp_path: Path) -> None:
+    file_path = tmp_path / "fallback-ts.lnk"
+    file_path.write_bytes(
+        _build_lnk_header(
+            creation_time=132271296000000000,
+            access_time=132271296100000000,
+            write_time=132271296200000000,
+        )
+    )
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert "creation_time" in result.features
+    assert "access_time" in result.features
+    assert "modification_time" in result.features
+    assert isinstance(result.features["creation_time"], str)
+    assert isinstance(result.features["access_time"], str)
+    assert isinstance(result.features["modification_time"], str)
 
 
 @pytest.mark.asyncio
