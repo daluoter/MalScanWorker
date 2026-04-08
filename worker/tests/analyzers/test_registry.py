@@ -170,3 +170,9 @@ def test_default_registry_registers_expected_order(monkeypatch: pytest.MonkeyPat
 
     names = [analyzer.name for analyzer in registry._analyzers]
     assert names == ["pe", "office", "pdf", "lnk", "script"]
+
+
+def test_default_registry_missing_modules_does_not_raise() -> None:
+    registry = get_default_analyzer_registry()
+
+    assert isinstance(registry, AnalyzerRegistry)

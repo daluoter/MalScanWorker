@@ -1,6 +1,7 @@
 """Analyzer registry and format dispatch."""
 
 import logging
+from importlib import import_module
 from pathlib import Path
 
 from malscan_worker.analyzers.base import FormatAnalyzer
@@ -39,16 +40,27 @@ class AnalyzerRegistry:
 
 def get_default_analyzer_registry() -> AnalyzerRegistry:
     """Create registry with default analyzer precedence."""
-    from malscan_worker.analyzers.lnk_analyzer import LNKAnalyzer
-    from malscan_worker.analyzers.office_adapter import OfficeAnalyzerAdapter
-    from malscan_worker.analyzers.pdf_analyzer import PDFAnalyzer
-    from malscan_worker.analyzers.pe_analyzer import PEAnalyzer
-    from malscan_worker.analyzers.script_analyzer import ScriptAnalyzer
-
     registry = AnalyzerRegistry()
-    registry.register(PEAnalyzer())
-    registry.register(OfficeAnalyzerAdapter())
-    registry.register(PDFAnalyzer())
-    registry.register(LNKAnalyzer())
-    registry.register(ScriptAnalyzer())
+
+    analyzer_specs = [
+        ("malscan_worker.analyzers.pe_analyzer", "PEAnalyzer"),
+        ("malscan_worker.analyzers.office_adapter", "OfficeAnalyzerAdapter"),
+        ("malscan_worker.analyzers.pdf_analyzer", "PDFAnalyzer"),
+        ("malscan_worker.analyzers.lnk_analyzer", "LNKAnalyzer"),
+        ("malscan_worker.analyzers.script_analyzer", "ScriptAnalyzer"),
+    ]
+
+    for module_name, class_name in analyzer_specs:
+        try:
+            module = import_module(module_name)
+            analyzer_class = getattr(module, class_name)
+            registry.register(analyzer_class())
+        except (ImportError, AttributeError) as exc:
+            logger.warning(
+                "skipping analyzer %s.%s: %s",
+                module_name,
+                class_name,
+                exc,
+            )
+
     return registry
