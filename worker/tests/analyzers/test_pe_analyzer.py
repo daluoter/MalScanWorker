@@ -8,6 +8,7 @@ from typing import Any
 
 import pefile
 import pytest
+from malscan_worker.analyzers.base import JsonValue
 from malscan_worker.analyzers.pe_analyzer import PEAnalyzer
 from malscan_worker.stages.base import StageContext
 
@@ -395,3 +396,22 @@ async def test_suspicious_resource_indicator(
     indicators = {indicator["type"]: indicator for indicator in result.indicators}
     assert "suspicious_resource" in indicators
     assert indicators["suspicious_resource"]["severity"] == "medium"
+
+
+def test_packer_clues_order_is_deterministic() -> None:
+    analyzer = PEAnalyzer()
+
+    sections: list[JsonValue] = [
+        {"name": "UPX1", "entropy": 5.1},
+        {"name": "UPX0", "entropy": 5.2},
+    ]
+    imports: list[JsonValue] = [{"dll": "KERNEL32.dll", "functions": ["Sleep"]}] * 2
+
+    clues = analyzer._derive_packer_clues(sections, imports)
+    section_name_clues = [
+        clue["value"]
+        for clue in clues
+        if isinstance(clue, dict) and clue.get("type") == "section_name"
+    ]
+
+    assert section_name_clues == ["upx0", "upx1"]

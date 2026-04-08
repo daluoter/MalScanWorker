@@ -447,7 +447,7 @@ class PEAnalyzer(FormatAnalyzer):
             for section in sections
             if isinstance(section, dict)
         }
-        for suspicious_name in _SUSPICIOUS_SECTION_NAMES:
+        for suspicious_name in sorted(_SUSPICIOUS_SECTION_NAMES):
             if suspicious_name in section_names:
                 clues.append({"type": "section_name", "value": suspicious_name})
 
