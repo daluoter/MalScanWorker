@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import importlib
 import re
 import struct
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from malscan_worker.analyzers.base import (
     AnalyzerIndicator,
@@ -22,7 +23,11 @@ if TYPE_CHECKING:
     from malscan_worker.stages.base import StageContext
 
 try:
-    from LnkParse3.lnk_file import lnk_file as _lnk_file_class
+    _lnk_file_module = importlib.import_module("LnkParse3.lnk_file")
+
+    _lnk_file_class = cast(Any, getattr(_lnk_file_module, "LnkFile", None))
+    if _lnk_file_class is None:
+        _lnk_file_class = cast(Any, getattr(_lnk_file_module, "lnk_file", None))
 except Exception:
     _lnk_file_class = None
 
@@ -156,9 +161,16 @@ class LNKAnalyzer(FormatAnalyzer):
             return {}, ["LnkParse3 not available; using fallback parser"]
 
         try:
-            lnk_obj = _lnk_file_class(str(file_path))
+            lnk_obj = self._instantiate_lnk_parser(file_path)
         except Exception as exc:
             return {}, [f"failed to parse LNK with LnkParse3: {exc}"]
+
+        process = getattr(lnk_obj, "process", None)
+        if callable(process):
+            try:
+                process()
+            except Exception as exc:
+                return {}, [f"failed to process LNK with LnkParse3: {exc}"]
 
         extracted: dict[str, JsonValue] = {}
 
@@ -195,6 +207,35 @@ class LNKAnalyzer(FormatAnalyzer):
             extracted["modification_time"] = timestamps.get("modified")
 
         return extracted, []
+
+    def _instantiate_lnk_parser(self, file_path: Path) -> Any:
+        parser_ctor = cast(Callable[..., Any], _lnk_file_class)
+
+        last_error: Exception | None = None
+        try:
+            return parser_ctor(str(file_path))
+        except Exception as exc:
+            last_error = exc
+
+        try:
+            return parser_ctor(file_path)
+        except Exception as exc:
+            last_error = exc
+
+        try:
+            return parser_ctor(indata=file_path.read_bytes())
+        except Exception as exc:
+            last_error = exc
+
+        with file_path.open("rb") as handle:
+            try:
+                return parser_ctor(fhandle=handle)
+            except Exception as exc:
+                last_error = exc
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("failed to instantiate LnkParse3 parser")
 
     def _extract_timestamps_from_parser(self, lnk_obj: Any) -> dict[str, JsonValue]:
         created = self._extract_any(lnk_obj, "creation_time", "created_time")

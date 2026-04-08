@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import struct
 from pathlib import Path
+from typing import Any, cast
 
+import malscan_worker.analyzers.lnk_analyzer as lnk_module
 import pytest
 from malscan_worker.analyzers.lnk_analyzer import LNKAnalyzer
 from malscan_worker.stages.base import StageContext
@@ -66,6 +68,11 @@ def test_can_handle_rejects_non_lnk(tmp_path: Path) -> None:
     analyzer = LNKAnalyzer()
 
     assert analyzer.can_handle(file_path, "text/plain", b"hello") is False
+
+
+def test_default_parser_binding_resolves_lnkparse3_api() -> None:
+    parser_symbol = cast(Any, getattr(lnk_module, "_lnk_file_class", None))
+    assert parser_symbol is not None
 
 
 @pytest.mark.asyncio
