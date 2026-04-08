@@ -227,12 +227,6 @@ class LNKAnalyzer(FormatAnalyzer):
         except Exception as exc:
             last_error = exc
 
-        with file_path.open("rb") as handle:
-            try:
-                return parser_ctor(fhandle=handle)
-            except Exception as exc:
-                last_error = exc
-
         if last_error is not None:
             raise last_error
         raise RuntimeError("failed to instantiate LnkParse3 parser")
