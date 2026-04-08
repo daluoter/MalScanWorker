@@ -65,6 +65,33 @@ class _FakeSection:
         return self._data
 
 
+class _FakeResourceDataStruct:
+    def __init__(self, offset_to_data: int, size: int) -> None:
+        self.OffsetToData = offset_to_data
+        self.Size = size
+
+
+class _FakeResourceData:
+    def __init__(self, offset_to_data: int, size: int) -> None:
+        self.struct = _FakeResourceDataStruct(offset_to_data, size)
+
+
+class _FakeResourceLangEntry:
+    def __init__(self, offset_to_data: int, size: int) -> None:
+        self.data = _FakeResourceData(offset_to_data, size)
+
+
+class _FakeResourceNameEntry:
+    def __init__(self, lang_entries: list[_FakeResourceLangEntry]) -> None:
+        self.directory = SimpleNamespace(entries=lang_entries)
+
+
+class _FakeResourceRootEntry:
+    def __init__(self, resource_id: int, name_entries: list[_FakeResourceNameEntry]) -> None:
+        self.id = resource_id
+        self.directory = SimpleNamespace(entries=name_entries)
+
+
 class _FakePE:
     def __init__(
         self,
@@ -72,6 +99,8 @@ class _FakePE:
         imports: list[_FakeImportEntry],
         *,
         timestamp: int = 1_700_000_000,
+        resource_entries: list[_FakeResourceRootEntry] | None = None,
+        resource_data: bytes = b"",
     ) -> None:
         self.FILE_HEADER = SimpleNamespace(
             Machine=0x8664,
@@ -82,9 +111,12 @@ class _FakePE:
         self.sections = sections
         self.DIRECTORY_ENTRY_IMPORT = imports
         self.DIRECTORY_ENTRY_EXPORT = SimpleNamespace(symbols=[])
-        self.DIRECTORY_ENTRY_RESOURCE = None
+        self.DIRECTORY_ENTRY_RESOURCE = (
+            SimpleNamespace(entries=resource_entries) if resource_entries is not None else None
+        )
         self.DIRECTORY_ENTRY_DEBUG: list[Any] = []
         self.DIRECTORY_ENTRY_TLS = None
+        self._resource_data = resource_data
 
     def is_dll(self) -> bool:
         return False
@@ -94,6 +126,9 @@ class _FakePE:
 
     def get_overlay(self) -> bytes:
         return b""
+
+    def get_data(self, offset: int, size: int) -> bytes:
+        return self._resource_data[offset : offset + size]
 
     def close(self) -> None:
         return None
@@ -267,3 +302,96 @@ async def test_high_entropy_indicator_behavior(
     assert "high_entropy_section" in indicators
     assert indicators["high_entropy_section"]["severity"] == "medium"
     assert result.risk_score == 8
+
+
+@pytest.mark.asyncio
+async def test_suspicious_imports_indicator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "imports.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    fake_pe = _FakePE(
+        sections=[_FakeSection(".text", 4.1, b"\x90" * 128)],
+        imports=[_FakeImportEntry(b"KERNEL32.dll", [b"CreateRemoteThread"])],
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicators = {indicator["type"]: indicator for indicator in result.indicators}
+    assert "suspicious_imports" in indicators
+    assert indicators["suspicious_imports"]["severity"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_packer_detected_indicator_from_upx_section(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "packed.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    fake_pe = _FakePE(
+        sections=[_FakeSection("UPX0", 5.6, b"\x90" * 96)],
+        imports=[_FakeImportEntry(b"KERNEL32.dll", [b"Sleep"])],
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {indicator["type"] for indicator in result.indicators}
+    assert "packer_detected" in indicator_types
+
+
+@pytest.mark.asyncio
+async def test_suspicious_resource_indicator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "resource.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    high_entropy_blob = bytes(range(256)) * 16
+    resource_entries = [
+        _FakeResourceRootEntry(
+            resource_id=10,
+            name_entries=[
+                _FakeResourceNameEntry(
+                    lang_entries=[
+                        _FakeResourceLangEntry(offset_to_data=0, size=len(high_entropy_blob))
+                    ]
+                )
+            ],
+        )
+    ]
+
+    fake_pe = _FakePE(
+        sections=[_FakeSection(".text", 4.0, b"\x90" * 64)],
+        imports=[_FakeImportEntry(b"KERNEL32.dll", [b"Sleep"])],
+        resource_entries=resource_entries,
+        resource_data=high_entropy_blob,
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    indicators = {indicator["type"]: indicator for indicator in result.indicators}
+    assert "suspicious_resource" in indicators
+    assert indicators["suspicious_resource"]["severity"] == "medium"
