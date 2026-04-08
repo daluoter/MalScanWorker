@@ -116,6 +116,14 @@ class TestFormatAnalyzerABC:
     @pytest.mark.asyncio
     async def test_concrete_subclass_analyze_is_awaitable(self, tmp_path: Path) -> None:
         called = asyncio.Event()
+        ctx = StageContext(
+            job_id="job-1",
+            file_id="file-1",
+            storage_key="storage-key",
+            sha256="0" * 64,
+            original_filename="f.bin",
+            file_path=tmp_path / "f",
+        )
 
         class DummyAnalyzer(FormatAnalyzer):
             @property
@@ -130,7 +138,7 @@ class TestFormatAnalyzerABC:
                 return AnalyzerResult(analyzer_name="dummy", format_type="DUMMY")
 
         analyzer = DummyAnalyzer()
-        result = await analyzer.analyze(tmp_path / "f", None)
+        result = await analyzer.analyze(tmp_path / "f", ctx)
 
         assert called.is_set()
         assert result.analyzer_name == "dummy"
