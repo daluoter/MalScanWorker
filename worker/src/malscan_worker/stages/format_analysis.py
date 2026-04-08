@@ -12,6 +12,7 @@ import structlog
 
 from malscan_worker.analyzers import get_default_analyzer_registry
 from malscan_worker.analyzers.base import AnalyzerArtifact
+from malscan_worker.config import get_settings
 from malscan_worker.db import create_artifact
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
@@ -104,6 +105,17 @@ class FormatAnalysisStage(Stage):
         """Create artifact records and submit non-duplicate sub-jobs."""
         if not ctx.job:
             return 0, [], []
+
+        settings = get_settings()
+        max_depth = getattr(settings, "max_job_depth", 3)
+        if ctx.job.depth >= max_depth:
+            log.info(
+                "format_analysis_max_depth_reached",
+                job_id=ctx.job_id,
+                depth=ctx.job.depth,
+                max_depth=max_depth,
+            )
+            return 0, [], [f"max depth {max_depth} reached"]
 
         root_artifact_id = ctx.root_artifact_id
         parent_artifact_id = ctx.artifact_id

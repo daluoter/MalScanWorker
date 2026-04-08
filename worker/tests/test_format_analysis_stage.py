@@ -464,3 +464,75 @@ async def test_duplicate_within_extraction_skips_second_duplicate_subjob(
     assert len(created) == 2
     assert created[1]["verdict"] == "skipped"
     assert created[1]["extraction_note"] == "duplicate_within_extraction"
+
+
+@pytest.mark.asyncio
+async def test_max_depth_guard_skips_artifact_creation_and_subjob_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[{"path": str(artifact_path), "filename": "child.bin"}],
+            )
+
+    submitter_calls = 0
+
+    class _TrackingSubmitter:
+        async def submit_subjob(self, **kwargs: Any) -> str:
+            del kwargs
+            nonlocal submitter_calls
+            submitter_calls += 1
+            return "subjob-1"
+
+    get_instance_calls = 0
+
+    async def _fake_get_submitter() -> _TrackingSubmitter:
+        nonlocal get_instance_calls
+        get_instance_calls += 1
+        return _TrackingSubmitter()
+
+    create_artifact_calls = 0
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        del kwargs
+        nonlocal create_artifact_calls
+        create_artifact_calls += 1
+        return {"id": "artifact-1"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_settings",
+        lambda: SimpleNamespace(max_job_depth=3),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+    ctx.job = SimpleNamespace(id=uuid.uuid4(), depth=3)
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert result.findings["sub_jobs_created"] == 0
+    assert create_artifact_calls == 0
+    assert get_instance_calls == 0
+    assert submitter_calls == 0
