@@ -391,6 +391,67 @@ When an uploaded archive requires a password, the system enters a password flow 
 
 ---
 
+## Format-Specific Analyzer Architecture (Phase 1)
+
+The worker now includes a dedicated `format-analysis` stage to add deep, format-specific visibility beyond generic static scanning (ClamAV/YARA/regex IOC).
+
+### What `AnalyzerRegistry` is
+
+`AnalyzerRegistry` is a first-match dispatch registry for pluggable analyzers:
+
+- Uses MIME (from `file-type`) plus magic bytes
+- Selects the first analyzer that can handle the file
+- Provides deterministic ordering and incremental extensibility
+
+Current default order:
+
+1. `PEAnalyzer`
+2. `OfficeAnalyzerAdapter`
+3. `PDFAnalyzer`
+4. `LNKAnalyzer`
+5. `ScriptAnalyzer`
+
+### Formats supported in this phase
+
+- PE (EXE/DLL)
+- Office (RTF/OLE/OOXML)
+- PDF
+- LNK
+- Script (PowerShell / JavaScript / VBScript / Batch / HTA)
+
+### How `DocumentAnalysisStage` is integrated
+
+The existing `DocumentAnalysisStage` was intentionally not rewritten yet.
+Instead, it is integrated through an adapter/shim (`OfficeAnalyzerAdapter`):
+
+- Reuses current Office parsing and exploit detection internals
+- Maps legacy findings into unified `AnalyzerResult`
+- Lets Office participate in shared format-analysis scoring/reporting
+
+### Behavior/config changes in this phase
+
+- Pipeline order now includes `format-analysis` between parallel static stages and later sequential stages.
+- Reports now include `results.format_analysis`.
+- `results.document_analysis` remains for backward compatibility.
+- Format analysis can submit extracted artifacts as sub-jobs.
+- Recursive submission in this stage now enforces max-depth guardrails.
+
+### Intentionally not included yet
+
+- Full internal decomposition/rewrite of `DocumentAnalysisStage` as a native Office analyzer
+- PDF JavaScript emulation/deobfuscation
+- Full LNK extra-data ecosystem parsing
+- Script AST/symbolic execution-level analysis
+- Cross-format chain correlation (e.g., LNK -> script -> downloader)
+
+### Limitations and follow-up work
+
+- Some parser dependencies are optional and fall back gracefully when unavailable.
+- Indicator logic is heuristic-oriented and designed for explainability; precision tuning continues.
+- Deeper format semantics, cross-format correlation, and threat-intel enrichment are planned follow-ups.
+
+---
+
 ## API Endpoints
 
 | Method | Path | Service | Description |
