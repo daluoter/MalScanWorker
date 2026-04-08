@@ -359,9 +359,13 @@ docker compose up -d --build
 
 ---
 
-## Password-Protected Archive Analysis
+## Password-Protected and Recursive Archive Analysis
 
-When an uploaded archive (ZIP, 7z, RAR) requires a password, the system automatically pauses analysis and prompts for input.
+When an uploaded archive requires a password, the system enters a password flow first; after successful unlock, recursive extraction and descendant analysis begin.
+
+### Supported Formats
+- **Archive:** ZIP, 7z, RAR, TAR, GZIP, BZ2
+- **ISO:** currently a stub (planned, not actively extracted yet)
 
 ### Supported Encryption Methods
 - **ZIP:** ZipCrypto / AES-256 (WZ_AES)
@@ -369,15 +373,21 @@ When an uploaded archive (ZIP, 7z, RAR) requires a password, the system automati
 - **RAR:** AES-128 / AES-256
 
 ### Workflow
-1. Upload a password-protected archive → system detects it and enters the "password required" state (`password_required` job status)
-2. Enter the password on the job status page → system retries extraction and continues analysis
-3. Up to **3** retry attempts allowed
+1. Upload a password-protected archive → system auto-detects and sets `password_required`
+2. Submit password on the job status page → system retries extraction and resumes analysis
+3. After successful unlock, the worker creates artifact lineage records and dispatches recursive sub-jobs
+4. If dedup finds an existing DB file row but MinIO object has expired, the worker auto re-uploads to avoid sub-job `NoSuchKey`
+5. Up to **3** password attempts are allowed
    - Correct password: extraction succeeds and inner files are analyzed
-   - 3 wrong attempts: final report is generated with an explicit "extraction failed" notice
+   - 3 wrong attempts: final report is generated with explicit extraction-failed notice
 
-### Report Visibility
-- Successful extraction: report shows archive extraction info (file count, sub-jobs, decompressed size)
-- Failed extraction: report displays a red banner indicating that extraction failed
+### Report and Navigation Behavior
+- Parent report is shown only after the full descendant job tree reaches terminal states
+  - If descendants are still running, `GET /api/v1/reports/{job_id}` returns `409`
+  - Frontend displays a waiting state and polls until report is ready
+- Successful extraction: report includes archive extraction info (file count, sub-jobs, total extracted size)
+- Failed extraction: report shows a red extraction-failed banner
+- Child Job/Report pages include a "back to parent analysis" entry
 
 ---
 
