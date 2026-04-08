@@ -1,0 +1,573 @@
+"""PDF format analyzer."""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from pypdf import PdfReader
+
+from malscan_worker.analyzers.base import (
+    AnalyzerIndicator,
+    AnalyzerResult,
+    FormatAnalyzer,
+    JsonValue,
+)
+
+if TYPE_CHECKING:
+    from malscan_worker.stages.base import StageContext
+
+
+_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
+
+_SEVERITY_WEIGHTS = {
+    "critical": 25,
+    "high": 15,
+    "medium": 8,
+    "low": 3,
+}
+
+_PDF_MAGIC_RE = re.compile(rb"^(?:\xef\xbb\xbf)?[\t\n\r\f ]*%PDF-")
+_OBJ_RE = re.compile(rb"\b\d+\s+\d+\s+obj\b")
+_STREAM_RE = re.compile(rb"\bstream\b")
+_OBFUSCATED_NAME_RE = re.compile(rb"/([A-Za-z0-9]+(?:#[0-9A-Fa-f]{2})+[A-Za-z0-9#]*)")
+_FILTER_NAME_RE = re.compile(
+    rb"/(FlateDecode|LZWDecode|ASCII85Decode|ASCIIHexDecode|RunLengthDecode|CCITTFaxDecode|DCTDecode|JPXDecode|JBIG2Decode|Crypt)\b",
+    re.IGNORECASE,
+)
+_ACTION_JAVASCRIPT_RE = re.compile(rb"/S\s*/JavaScript\b")
+_ACTION_LAUNCH_RE = re.compile(rb"/S\s*/Launch\b")
+_OPEN_ACTION_RE = re.compile(rb"/OpenAction\b")
+
+_SUSPICIOUS_URI_PREFIXES = (
+    "javascript:",
+    "file:",
+    "cmd:",
+    "powershell:",
+)
+
+_EXECUTABLE_SUFFIXES = (
+    ".exe",
+    ".dll",
+    ".js",
+    ".vbs",
+    ".bat",
+    ".cmd",
+    ".scr",
+    ".ps1",
+    ".jar",
+)
+
+
+class PDFAnalyzer(FormatAnalyzer):
+    """Analyze PDFs for active content and suspicious structures."""
+
+    @property
+    def name(self) -> str:
+        return "pdf"
+
+    def can_handle(self, file_path: Path, mime: str, magic: bytes) -> bool:
+        del file_path
+        if mime.lower() == "application/pdf":
+            return True
+        return _PDF_MAGIC_RE.match(magic) is not None
+
+    async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+        del ctx
+        result = AnalyzerResult(analyzer_name=self.name, format_type="PDF")
+
+        try:
+            file_size = file_path.stat().st_size
+        except OSError as exc:
+            result.errors.append(f"failed to stat PDF file: {exc}")
+            return result
+
+        if file_size > _MAX_FILE_SIZE_BYTES:
+            result.errors.append("PDF analysis skipped: file exceeds 50MB limit")
+            return result
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._analyze_sync, file_path)
+
+    def _analyze_sync(self, file_path: Path) -> AnalyzerResult:
+        result = AnalyzerResult(analyzer_name=self.name, format_type="PDF")
+        features = self._empty_features()
+
+        try:
+            raw = file_path.read_bytes()
+        except OSError as exc:
+            result.errors.append(f"failed to read PDF file: {exc}")
+            result.features = features
+            return result
+
+        self._scan_raw_features(raw, features, include_action_tokens=False)
+
+        parser_ok = False
+        try:
+            reader = PdfReader(io.BytesIO(raw))
+            self._scan_structured(reader, features)
+            parser_ok = True
+        except Exception as exc:
+            result.errors.append(f"failed to parse PDF file: {exc}")
+            self._scan_raw_features(raw, features, include_action_tokens=True)
+
+        indicators = self._build_indicators(features)
+        result.features = features
+        result.indicators = indicators
+        result.risk_score = self._calculate_risk_score(indicators)
+        result.risk_factors = [str(ind.get("type", "")) for ind in indicators if ind.get("type")]
+
+        if not parser_ok and not result.errors:
+            result.errors.append("failed to parse PDF file")
+
+        return result
+
+    def _scan_structured(self, reader: PdfReader, features: dict[str, JsonValue]) -> None:
+        header = str(getattr(reader, "pdf_header", ""))
+        if header.startswith("%PDF-"):
+            features["version"] = header.removeprefix("%PDF-")
+
+        pages = list(getattr(reader, "pages", []))
+        features["page_count"] = len(pages)
+        features["encrypted"] = bool(getattr(reader, "is_encrypted", False))
+
+        root = self._resolve_indirect(getattr(reader, "trailer", {}).get("/Root"))
+        if isinstance(root, dict):
+            self._scan_root(root, features)
+
+        annotations = self._as_int(features.get("annotations"), default=0)
+        for page in pages:
+            page_obj = self._resolve_indirect(page)
+            if not isinstance(page_obj, dict):
+                continue
+
+            annots = self._resolve_indirect(page_obj.get("/Annots"))
+            if isinstance(annots, list):
+                annotations += len(annots)
+                for annot in annots:
+                    annot_obj = self._resolve_indirect(annot)
+                    if isinstance(annot_obj, dict):
+                        self._scan_action_container(annot_obj, features)
+
+            self._scan_action_container(page_obj, features)
+
+        features["annotations"] = annotations
+
+        try:
+            fields = reader.get_fields()
+            features["form_fields"] = len(fields) if isinstance(fields, dict) else 0
+        except Exception:
+            pass
+
+    def _scan_root(self, root: dict[str, Any], features: dict[str, JsonValue]) -> None:
+        self._scan_action_container(root, features)
+
+        names = self._resolve_indirect(root.get("/Names"))
+        if not isinstance(names, dict):
+            return
+
+        embedded = self._resolve_indirect(names.get("/EmbeddedFiles"))
+        if not isinstance(embedded, dict):
+            return
+
+        embedded_files = self._as_list(features["embedded_files"])
+        self._collect_embedded_files(embedded, embedded_files, set())
+
+        features["embedded_files"] = embedded_files
+
+    def _scan_action_container(
+        self, container: dict[str, Any], features: dict[str, JsonValue]
+    ) -> None:
+        direct_action = self._resolve_indirect(container.get("/A"))
+        if isinstance(direct_action, dict):
+            self._scan_action_dict(direct_action, features, from_open=False)
+
+        open_action = self._resolve_indirect(container.get("/OpenAction"))
+        if isinstance(open_action, dict):
+            self._scan_action_dict(open_action, features, from_open=True)
+
+        additional = self._resolve_indirect(container.get("/AA"))
+        if isinstance(additional, dict):
+            for key in ("/O", "/OpenAction", "/E", "/X", "/D", "/U"):
+                nested = self._resolve_indirect(additional.get(key))
+                if isinstance(nested, dict):
+                    self._scan_action_dict(
+                        nested,
+                        features,
+                        from_open=key in {"/O", "/OpenAction"},
+                    )
+
+    def _scan_action_dict(
+        self,
+        action: dict[str, Any],
+        features: dict[str, JsonValue],
+        *,
+        from_open: bool,
+    ) -> None:
+        action_type = self._stringify(action.get("/S"))
+        if not action_type:
+            return
+
+        open_actions = self._as_list(features["open_actions"])
+        if from_open:
+            open_actions.append(action_type)
+        features["open_actions"] = self._dedupe_strings(open_actions)
+
+        if action_type == "/Launch":
+            launch_target = self._stringify(action.get("/F"))
+            launch_actions = self._as_list(features["launch_actions"])
+            launch_actions.append(launch_target or "launch")
+            features["launch_actions"] = self._dedupe_strings(launch_actions)
+
+        if action_type == "/JavaScript":
+            js_payload = self._stringify(action.get("/JS"))
+            js_code = self._as_list(features["js_code"])
+            if js_payload:
+                js_code.append(js_payload)
+            else:
+                js_code.append("javascript-action")
+            features["js_code"] = self._dedupe_strings(js_code)
+
+        if action_type == "/URI":
+            uri = self._stringify(action.get("/URI"))
+            if uri:
+                uri_actions = self._as_list(features["uri_actions"])
+                uri_actions.append(uri)
+                features["uri_actions"] = self._dedupe_strings(uri_actions)
+
+        if action_type == "/GoToR":
+            names = self._as_list(features["suspicious_names"])
+            names.append("/GoToR")
+            features["suspicious_names"] = self._dedupe_strings(names)
+
+    def _scan_raw_features(
+        self,
+        raw: bytes,
+        features: dict[str, JsonValue],
+        *,
+        include_action_tokens: bool,
+    ) -> None:
+        text_l = raw.decode("latin-1", errors="ignore")
+
+        version_match = re.search(r"%PDF-(\d\.\d)", text_l)
+        if version_match and not features.get("version"):
+            features["version"] = version_match.group(1)
+
+        features["object_count"] = len(_OBJ_RE.findall(raw))
+
+        stream_count = len(_STREAM_RE.findall(raw))
+        filter_names = [
+            "/" + match.decode("ascii", errors="ignore") for match in _FILTER_NAME_RE.findall(raw)
+        ]
+        features["stream_info"] = {
+            "stream_count": stream_count,
+            "filter_count": len(filter_names),
+            "filters": self._dedupe_strings(filter_names),
+            "has_object_stream": "/ObjStm" in text_l,
+        }
+
+        if include_action_tokens:
+            if _ACTION_JAVASCRIPT_RE.search(raw):
+                js_code = self._as_list(features["js_code"])
+                if not js_code:
+                    js_code.append("javascript-action-token")
+                features["js_code"] = self._dedupe_strings(js_code)
+
+            if _ACTION_LAUNCH_RE.search(raw):
+                launch_actions = self._as_list(features["launch_actions"])
+                launch_actions.append("/Launch")
+                features["launch_actions"] = self._dedupe_strings(launch_actions)
+
+            if _OPEN_ACTION_RE.search(raw):
+                open_actions = self._as_list(features["open_actions"])
+                open_actions.append("/OpenAction")
+                features["open_actions"] = self._dedupe_strings(open_actions)
+
+            uri_actions = self._as_list(features["uri_actions"])
+            uri_actions.extend(re.findall(r"/URI\s*\(([^)]*)\)", text_l))
+            features["uri_actions"] = self._dedupe_strings(uri_actions)
+
+        obfuscated_names = [
+            "/" + match.decode("ascii", errors="ignore")
+            for match in _OBFUSCATED_NAME_RE.findall(raw)
+        ]
+        suspicious_names = self._as_list(features["suspicious_names"])
+        suspicious_names.extend(obfuscated_names)
+
+        for token in ("/XFA", "/GoToR", "/ObjStm", "/URI", "/JavaScript", "/Launch"):
+            if token in text_l:
+                suspicious_names.append(token)
+
+        features["suspicious_names"] = self._dedupe_strings(suspicious_names)
+
+    def _build_indicators(self, features: dict[str, JsonValue]) -> list[AnalyzerIndicator]:
+        indicators: list[AnalyzerIndicator] = []
+
+        launch_actions = self._as_list(features["launch_actions"])
+        if launch_actions:
+            indicators.append(
+                {
+                    "type": "launch_action",
+                    "severity": "critical",
+                    "detail": "Launch action detected in PDF",
+                    "evidence": launch_actions,
+                }
+            )
+
+        js_code = self._as_list(features["js_code"])
+        if js_code:
+            indicators.append(
+                {
+                    "type": "embedded_javascript",
+                    "severity": "high",
+                    "detail": "Embedded JavaScript detected",
+                    "evidence": js_code,
+                }
+            )
+
+        open_actions = self._as_list(features["open_actions"])
+        if open_actions:
+            indicators.append(
+                {
+                    "type": "auto_open_action",
+                    "severity": "high",
+                    "detail": "Automatic open action detected",
+                    "evidence": open_actions,
+                }
+            )
+
+        embedded_files = self._as_list(features["embedded_files"])
+        executable_embeds: list[JsonValue] = []
+        for item in embedded_files:
+            if not isinstance(item, dict):
+                continue
+            item_dict = item
+            if bool(item_dict.get("executable")):
+                executable_embeds.append(item_dict)
+        if executable_embeds:
+            indicators.append(
+                {
+                    "type": "embedded_file_executable",
+                    "severity": "high",
+                    "detail": "Embedded executable-like attachment found",
+                    "evidence": executable_embeds,
+                }
+            )
+
+        suspicious_names = self._as_list(features["suspicious_names"])
+        obfuscated: list[JsonValue] = [str(name) for name in suspicious_names if "#" in str(name)]
+        if obfuscated:
+            indicators.append(
+                {
+                    "type": "name_obfuscation",
+                    "severity": "medium",
+                    "detail": "Obfuscated PDF name tokens detected",
+                    "evidence": obfuscated,
+                }
+            )
+
+        stream_info = features.get("stream_info")
+        if isinstance(stream_info, dict):
+            stream_count = self._as_int(stream_info.get("stream_count"), default=0)
+            filter_count = self._as_int(stream_info.get("filter_count"), default=0)
+            if filter_count >= 12 or (stream_count > 0 and filter_count > (stream_count * 2)):
+                indicators.append(
+                    {
+                        "type": "excessive_stream_filters",
+                        "severity": "medium",
+                        "detail": "Unusually high stream filter usage",
+                        "evidence": {
+                            "stream_count": stream_count,
+                            "filter_count": filter_count,
+                        },
+                    }
+                )
+
+            if (
+                bool(stream_info.get("has_object_stream"))
+                and self._as_int(features.get("object_count"), default=0) <= 1
+            ):
+                indicators.append(
+                    {
+                        "type": "object_stream_anomaly",
+                        "severity": "low",
+                        "detail": "Object stream token seen with very low object count",
+                        "evidence": {
+                            "object_count": self._as_int(features.get("object_count"), default=0),
+                            "has_object_stream": True,
+                        },
+                    }
+                )
+
+        if any(name == "/XFA" for name in suspicious_names):
+            indicators.append(
+                {
+                    "type": "xfa_form",
+                    "severity": "medium",
+                    "detail": "XFA form marker detected",
+                    "evidence": ["/XFA"],
+                }
+            )
+
+        if any(name == "/GoToR" for name in suspicious_names):
+            indicators.append(
+                {
+                    "type": "goto_remote",
+                    "severity": "medium",
+                    "detail": "GoToR remote navigation action detected",
+                    "evidence": ["/GoToR"],
+                }
+            )
+
+        uri_actions = self._as_list(features["uri_actions"])
+        suspicious_uris: list[JsonValue] = []
+        for uri in uri_actions:
+            uri_s = str(uri)
+            uri_l = uri_s.lower()
+            if uri_l.startswith(_SUSPICIOUS_URI_PREFIXES) or uri_l.endswith(_EXECUTABLE_SUFFIXES):
+                suspicious_uris.append(uri_s)
+        if suspicious_uris:
+            indicators.append(
+                {
+                    "type": "suspicious_uri",
+                    "severity": "medium",
+                    "detail": "Suspicious URI scheme or target detected",
+                    "evidence": self._dedupe_strings(suspicious_uris),
+                }
+            )
+
+        return indicators
+
+    def _calculate_risk_score(self, indicators: list[AnalyzerIndicator]) -> int:
+        score = 0
+        for indicator in indicators:
+            severity = str(indicator.get("severity", ""))
+            score += _SEVERITY_WEIGHTS.get(severity, 0)
+        return min(score, 100)
+
+    def _collect_embedded_files(
+        self,
+        node: Any,
+        embedded_files: list[JsonValue],
+        visited: set[int],
+    ) -> None:
+        resolved = self._resolve_indirect(node)
+        if not isinstance(resolved, dict):
+            return
+
+        node_id = id(resolved)
+        if node_id in visited:
+            return
+        visited.add(node_id)
+
+        names_array = self._resolve_indirect(resolved.get("/Names"))
+        if isinstance(names_array, list):
+            self._collect_names_array(names_array, embedded_files)
+
+        kids = self._resolve_indirect(resolved.get("/Kids"))
+        if not isinstance(kids, list):
+            return
+
+        for kid in kids:
+            self._collect_embedded_files(kid, embedded_files, visited)
+
+    def _collect_names_array(
+        self,
+        names_array: list[Any],
+        embedded_files: list[JsonValue],
+    ) -> None:
+        for index in range(0, len(names_array), 2):
+            name_obj = names_array[index]
+            file_spec = names_array[index + 1] if index + 1 < len(names_array) else None
+            filename = self._stringify(name_obj)
+            file_spec_obj = self._resolve_indirect(file_spec)
+
+            file_meta: dict[str, JsonValue] = {"name": filename}
+            if isinstance(file_spec_obj, dict):
+                fs_name = self._stringify(file_spec_obj.get("/F"))
+                if fs_name:
+                    file_meta["name"] = fs_name
+                    filename = fs_name
+
+            if filename.lower().endswith(_EXECUTABLE_SUFFIXES):
+                file_meta["executable"] = True
+
+            embedded_files.append(file_meta)
+
+    @staticmethod
+    def _resolve_indirect(value: Any) -> Any:
+        try:
+            getter = getattr(value, "get_object", None)
+            if callable(getter):
+                return getter()
+        except Exception:
+            return value
+        return value
+
+    @staticmethod
+    def _stringify(value: Any) -> str:
+        resolved = PDFAnalyzer._resolve_indirect(value)
+        if resolved is None:
+            return ""
+        if isinstance(resolved, bytes):
+            return resolved.decode("latin-1", errors="ignore")
+        return str(resolved)
+
+    @staticmethod
+    def _as_list(value: JsonValue) -> list[JsonValue]:
+        if isinstance(value, list):
+            return list(value)
+        return []
+
+    @staticmethod
+    def _dedupe_strings(values: list[Any]) -> list[JsonValue]:
+        seen: set[str] = set()
+        result: list[JsonValue] = []
+        for value in values:
+            item = str(value)
+            if item in seen:
+                continue
+            seen.add(item)
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _as_int(value: JsonValue | None, *, default: int) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return default
+        return default
+
+    @staticmethod
+    def _empty_features() -> dict[str, JsonValue]:
+        return {
+            "version": None,
+            "page_count": 0,
+            "encrypted": False,
+            "object_count": 0,
+            "js_code": [],
+            "launch_actions": [],
+            "open_actions": [],
+            "uri_actions": [],
+            "embedded_files": [],
+            "annotations": 0,
+            "form_fields": 0,
+            "stream_info": {
+                "stream_count": 0,
+                "filter_count": 0,
+                "filters": [],
+                "has_object_stream": False,
+            },
+            "suspicious_names": [],
+        }

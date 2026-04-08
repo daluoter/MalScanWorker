@@ -4,7 +4,7 @@ import asyncio
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +22,8 @@ from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
-from malscan_worker.stages.document_analysis import DocumentAnalysisStage
 from malscan_worker.stages.filetype import FileTypeStage
+from malscan_worker.stages.format_analysis import FormatAnalysisStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
 from malscan_worker.stages.sandbox import SandboxStage
 from malscan_worker.stages.yara_scan import YaraStage
@@ -33,13 +33,24 @@ log = structlog.get_logger()
 settings = get_settings()
 
 
+class _PipelineStage(Protocol):
+    @property
+    def name(self) -> str:
+        ...
+
+    async def execute(self, ctx: StageContext) -> StageResult:
+        ...
+
+
 # Stages that can run in parallel (Strictly no database writers here!)
 PARALLEL_STAGES = [
     FileTypeStage(),
     ClamAVStage(),
-    YaraStage(),
+    YaraStage(),  # type: ignore[no-untyped-call]
     IocExtractStage(),
 ]
+
+FORMAT_ANALYSIS_STAGE = FormatAnalysisStage()
 
 # Stages that should run sequentially
 # ArchiveExtractStage MUST be here because it writes to the DB,
@@ -47,7 +58,6 @@ PARALLEL_STAGES = [
 # DocumentAnalysisStage also creates sub-jobs for extracted artifacts.
 SEQUENTIAL_STAGES = [
     ArchiveExtractStage(),
-    DocumentAnalysisStage(),
     SandboxStage(),
 ]
 
@@ -166,6 +176,26 @@ def _build_analysis_result(
         if verdict == "clean":
             verdict = "suspicious"
 
+    # ------------------------------------------------------------------
+    # Format analysis scoring
+    # ------------------------------------------------------------------
+    fmt = stage_findings.get("format-analysis", {})
+    fmt_risk_score = int(fmt.get("risk_score", 0) or 0)
+    fmt_indicators = fmt.get("indicators", [])
+    for indicator in fmt_indicators:
+        severity = str(indicator.get("severity", "")).lower()
+        if severity == "critical":
+            verdict = "malicious"
+            score = max(score, 85)
+        elif severity == "high":
+            if verdict == "clean":
+                verdict = "suspicious"
+            score = max(score, 60)
+        elif severity == "medium":
+            if verdict == "clean":
+                verdict = "suspicious"
+    score = max(score, fmt_risk_score)
+
     # Build file info
     filetype = stage_findings.get("file-type", {})
     file_info = {
@@ -240,6 +270,14 @@ def _build_analysis_result(
             },
             "yara_hits": yara_matches,
             "iocs": iocs,
+            "format_analysis": {
+                "analyzer": fmt.get("analyzer"),
+                "format_type": fmt.get("format_type"),
+                "risk_score": fmt_risk_score,
+                "risk_factors": fmt.get("risk_factors", []),
+                "indicators": fmt_indicators,
+                "features": fmt.get("features", {}),
+            },
             "document_analysis": doc_analysis,
             "sandbox": stage_findings.get("sandbox", {}),
             "archive_extract": stage_findings.get("archive-extract", {}),
@@ -248,7 +286,7 @@ def _build_analysis_result(
     }
 
 
-async def _run_stage(stage, ctx: StageContext) -> StageResult:
+async def _run_stage(stage: _PipelineStage, ctx: StageContext) -> StageResult:
     """Run a single stage with error handling and timeout."""
     stage_name = stage.name
     job_id = ctx.job_id
@@ -315,7 +353,7 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
     file_id = job_data["file_id"]
     storage_key = job_data.get("storage_key", "")
 
-    total_stages = len(PARALLEL_STAGES) + len(SEQUENTIAL_STAGES)
+    total_stages = len(PARALLEL_STAGES) + 1 + len(SEQUENTIAL_STAGES)
 
     log.info(
         "pipeline_started",
@@ -377,6 +415,12 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             ctx.previous_results.extend(parallel_results)
             stages_done += len(PARALLEL_STAGES)
 
+            # 2. Run format analysis stage before sequential stages.
+            format_result = await _run_stage(FORMAT_ANALYSIS_STAGE, ctx)
+            results.append(format_result)
+            ctx.previous_results.append(format_result)
+            stages_done += 1
+
             # Check for critical failures?
             # For now, we remain resilient and continue even if some
             # parallel stages fail (like ClamAV).
@@ -385,7 +429,7 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             # Update status after static analysis
             await update_job_stage(job_id, "recursive_analysis", stages_done)
 
-            # 2. Run Sequential Stages (like ArchiveExtract and Sandbox)
+            # 3. Run Sequential Stages (like ArchiveExtract and Sandbox)
             for stage in SEQUENTIAL_STAGES:
                 res = await _run_stage(stage, ctx)
                 results.append(res)

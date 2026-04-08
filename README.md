@@ -391,6 +391,69 @@ docker compose up -d --build
 
 ---
 
+## 格式專用分析器架構（Phase 1）
+
+Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific）分析能力，補足先前主要依賴 generic 掃描（ClamAV/YARA/regex IOC）的可見性缺口。
+
+### AnalyzerRegistry 是什麼
+
+`AnalyzerRegistry` 是一個「第一個匹配就採用」的分析器註冊與分派器：
+
+- 使用 `file-type` 階段產生的 MIME 與檔案 magic bytes 判斷
+- 依照固定順序選擇可處理該檔案的 analyzer
+- 維持可插拔擴充模式，後續可持續新增格式分析器
+
+目前預設順序：
+
+1. `PEAnalyzer`
+2. `OfficeAnalyzerAdapter`
+3. `PDFAnalyzer`
+4. `LNKAnalyzer`
+5. `ScriptAnalyzer`
+
+### 本階段已支援格式
+
+- PE（EXE/DLL）
+- Office（RTF/OLE/OOXML）
+- PDF
+- LNK
+- Script（PowerShell / JavaScript / VBScript / Batch / HTA）
+
+### DocumentAnalysisStage 的整合方式
+
+既有 `DocumentAnalysisStage` 並未拆解重寫，而是透過 `OfficeAnalyzerAdapter`（adapter/shim）包裝進新架構：
+
+- 保留既有 Office 深度分析邏輯
+- 將舊 findings 轉換成統一 `AnalyzerResult`
+- 讓 Office 能與 PE/PDF/LNK/Script 共用同一套格式分析輸出與評分流
+
+### 行為與設定變更
+
+- Pipeline 流程變更為：
+  - 平行靜態階段（file-type/clamav/yara/ioc-extract）
+  - `format-analysis`
+  - 後續序列階段（archive-extract/sandbox）
+- 報告新增 `results.format_analysis` 區塊
+- `results.document_analysis` 暫時保留（向後相容）
+- 格式分析階段可提交抽取 artifacts 並建立 sub-job
+- 遞迴提交沿用 max depth 保護機制，避免無限擴張
+
+### 本階段刻意不做
+
+- 不重構 `DocumentAnalysisStage` 內部為原生 Office analyzer（僅 adapter）
+- 不做 PDF JS 模擬/深度去混淆
+- 不做完整 LNK ExtraData 生態解析
+- 不做 Script AST/符號執行等進階語意分析
+- 不做跨格式關聯偵測（例如 LNK -> Script -> Downloader 鏈）
+
+### 限制與後續工作
+
+- 部分第三方 parser 屬 optional dependency，缺失時採 graceful degradation
+- 規則偏重可解釋性的 heuristic；後續可持續校準誤報/漏報
+- 可進一步加入跨格式關聯與 threat-intel enrichment
+
+---
+
 ## API 端點
 
 | 方法 | 路徑 | 處理服務 | 說明 |
