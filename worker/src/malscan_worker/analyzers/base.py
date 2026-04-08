@@ -3,9 +3,10 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeAlias, TypedDict
+from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
-from malscan_worker.stages.base import StageContext
+if TYPE_CHECKING:
+    from malscan_worker.stages.base import StageContext
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -60,6 +61,6 @@ class FormatAnalyzer(ABC):
         ...
 
     @abstractmethod
-    async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+    async def analyze(self, file_path: Path, ctx: "StageContext") -> AnalyzerResult:
         """Run format-specific analysis and return standardized findings."""
         ...
