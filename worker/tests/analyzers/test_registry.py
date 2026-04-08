@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
 from malscan_worker.analyzers.base import AnalyzerResult, FormatAnalyzer
 from malscan_worker.analyzers.registry import AnalyzerRegistry, get_default_analyzer_registry
 
@@ -128,12 +129,12 @@ def test_detect_reads_first_32_bytes(tmp_path: Path) -> None:
     assert analyzer.calls[0][2] == payload[:32]
 
 
-def test_default_registry_registers_expected_order(monkeypatch: object) -> None:
+def test_default_registry_registers_expected_order(monkeypatch: pytest.MonkeyPatch) -> None:
     class PEAnalyzer(SpyAnalyzer):
         def __init__(self) -> None:
             super().__init__("pe", should_handle=False)
 
-    class OfficeAnalyzer(SpyAnalyzer):
+    class OfficeAnalyzerAdapter(SpyAnalyzer):
         def __init__(self) -> None:
             super().__init__("office", should_handle=False)
 
@@ -150,11 +151,14 @@ def test_default_registry_registers_expected_order(monkeypatch: object) -> None:
             super().__init__("script", should_handle=False)
 
     modules = {
-        "malscan_worker.analyzers.pe": ("PEAnalyzer", PEAnalyzer),
-        "malscan_worker.analyzers.office": ("OfficeAnalyzer", OfficeAnalyzer),
-        "malscan_worker.analyzers.pdf": ("PDFAnalyzer", PDFAnalyzer),
-        "malscan_worker.analyzers.lnk": ("LNKAnalyzer", LNKAnalyzer),
-        "malscan_worker.analyzers.script": ("ScriptAnalyzer", ScriptAnalyzer),
+        "malscan_worker.analyzers.pe_analyzer": ("PEAnalyzer", PEAnalyzer),
+        "malscan_worker.analyzers.office_adapter": (
+            "OfficeAnalyzerAdapter",
+            OfficeAnalyzerAdapter,
+        ),
+        "malscan_worker.analyzers.pdf_analyzer": ("PDFAnalyzer", PDFAnalyzer),
+        "malscan_worker.analyzers.lnk_analyzer": ("LNKAnalyzer", LNKAnalyzer),
+        "malscan_worker.analyzers.script_analyzer": ("ScriptAnalyzer", ScriptAnalyzer),
     }
 
     for module_name, (class_name, klass) in modules.items():
