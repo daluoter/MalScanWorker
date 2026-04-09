@@ -46,6 +46,12 @@ def _make_ctx(file_path: Path, original_filename: str = "sample.doc") -> StageCo
     )
 
 
+def _make_job_context(file_path: Path, original_filename: str = "sample.doc") -> StageContext:
+    ctx = _make_ctx(file_path, original_filename)
+    ctx.job = type("Job", (), {"id": uuid.uuid4(), "depth": 0})()
+    return ctx
+
+
 def _make_ctx_with_filetype(
     file_path: Path, mime: str, original_filename: str = "sample.doc"
 ) -> StageContext:
@@ -408,10 +414,10 @@ class TestOOXMLAnalysis:
 
 
 class TestDocumentScoring:
-    """Test that _build_analysis_result properly scores document findings."""
+    """Test document reporting plus canonical format-analysis scoring."""
 
-    def _build_result(self, doc_findings: dict) -> dict:
-        """Helper to call _build_analysis_result with document findings."""
+    def _build_result(self, doc_findings: dict, format_findings: dict | None = None) -> dict:
+        """Helper to call _build_analysis_result with document and format findings."""
         from malscan_worker.pipeline import _build_analysis_result
 
         ctx = StageContext(
@@ -460,6 +466,15 @@ class TestDocumentScoring:
                 findings=doc_findings,
                 artifacts=[],
             ),
+            StageResult(
+                stage_name="format-analysis",
+                status="ok",
+                started_at=datetime.now(timezone.utc),
+                ended_at=datetime.now(timezone.utc),
+                duration_ms=10,
+                findings=format_findings or {},
+                artifacts=[],
+            ),
         ]
 
         return _build_analysis_result("job-1", "file-1", ctx, results, 100)
@@ -491,10 +506,25 @@ class TestDocumentScoring:
                 "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
                 "embedded_objects": [],
                 "suspicious_keywords": [],
-            }
+            },
+            {
+                "analyzer": "office",
+                "format_type": "RTF",
+                "risk_score": 25,
+                "risk_factors": ["equation_editor_ole"],
+                "indicators": [
+                    {
+                        "type": "equation_editor_ole",
+                        "severity": "critical",
+                        "detail": "test",
+                    }
+                ],
+                "features": {},
+            },
         )
-        assert report["verdict"] == "malicious"
-        assert report["score"] >= 85
+        assert report["verdict"] == "suspicious"
+        assert report["risk_level"] == "high"
+        assert report["score"] == 76
 
     def test_external_template_injection(self):
         report = self._build_result(
@@ -509,10 +539,25 @@ class TestDocumentScoring:
                 "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
                 "embedded_objects": [],
                 "suspicious_keywords": [],
-            }
+            },
+            {
+                "analyzer": "office",
+                "format_type": "OOXML",
+                "risk_score": 15,
+                "risk_factors": ["external_relationship"],
+                "indicators": [
+                    {
+                        "type": "external_relationship",
+                        "severity": "high",
+                        "detail": "http://evil.com/template.dotx",
+                    }
+                ],
+                "features": {},
+            },
         )
         assert report["verdict"] == "suspicious"
-        assert report["score"] >= 50
+        assert report["risk_level"] == "medium"
+        assert report["score"] == 53
 
     def test_autoexec_macro_with_suspicious_keywords(self):
         report = self._build_result(
@@ -522,10 +567,25 @@ class TestDocumentScoring:
                 "macros": {"found": True, "auto_exec": True, "suspicious": True, "sources": []},
                 "embedded_objects": [],
                 "suspicious_keywords": ["Shell", "CreateObject", "WScript.Shell"],
-            }
+            },
+            {
+                "analyzer": "office",
+                "format_type": "OLE",
+                "risk_score": 11,
+                "risk_factors": ["macro_auto_exec"],
+                "indicators": [
+                    {
+                        "type": "macro_auto_exec",
+                        "severity": "medium",
+                        "detail": "Office document contains auto-exec macros with suspicious APIs",
+                    }
+                ],
+                "features": {},
+            },
         )
         assert report["verdict"] == "suspicious"
-        assert report["score"] >= 65
+        assert report["risk_level"] == "medium"
+        assert report["score"] == 37
 
     def test_macro_found_but_benign(self):
         report = self._build_result(
@@ -535,12 +595,25 @@ class TestDocumentScoring:
                 "macros": {"found": True, "auto_exec": False, "suspicious": False, "sources": []},
                 "embedded_objects": [],
                 "suspicious_keywords": [],
-            }
+            },
+            {
+                "analyzer": "office",
+                "format_type": "OLE",
+                "risk_score": 3,
+                "risk_factors": ["macro_presence"],
+                "indicators": [
+                    {
+                        "type": "macro_presence",
+                        "severity": "low",
+                        "detail": "Office document contains macros",
+                    }
+                ],
+                "features": {},
+            },
         )
-        # Should have a low but nonzero score
-        assert report["score"] >= 15
-        # Verdict should stay clean if nothing else is suspicious
-        assert report["verdict"] == "clean"
+        assert report["score"] == 12
+        assert report["risk_level"] == "low"
+        assert report["verdict"] == "suspicious"
 
     def test_dde_field(self):
         report = self._build_result(
@@ -550,10 +623,25 @@ class TestDocumentScoring:
                 "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
                 "embedded_objects": [],
                 "suspicious_keywords": [],
-            }
+            },
+            {
+                "analyzer": "office",
+                "format_type": "OLE",
+                "risk_score": 15,
+                "risk_factors": ["dde_field"],
+                "indicators": [
+                    {
+                        "type": "dde_field",
+                        "severity": "high",
+                        "detail": "test",
+                    }
+                ],
+                "features": {},
+            },
         )
         assert report["verdict"] == "suspicious"
-        assert report["score"] >= 50
+        assert report["risk_level"] == "medium"
+        assert report["score"] == 53
 
     def test_report_contains_document_analysis_section(self):
         report = self._build_result(
@@ -577,3 +665,92 @@ class TestDocumentScoring:
         assert da["document_type"] == "rtf"
         assert da["embedded_objects_count"] == 1
         assert da["extracted_artifacts_count"] == 1
+
+
+class TestDocumentAnalysisSubmissionControl:
+    @pytest.mark.asyncio
+    async def test_execute_skips_subjob_submission_when_requested(self, tmp_path, monkeypatch):
+        p = tmp_path / "sample.doc"
+        p.write_bytes(b"not-used")
+        ctx = _make_job_context(p)
+        ctx.skip_artifact_submission = True  # type: ignore[attr-defined]
+
+        submit_calls = 0
+
+        async def _fake_submit_artifacts(self, submit_ctx, artifacts):
+            del self, submit_ctx, artifacts
+            nonlocal submit_calls
+            submit_calls += 1
+            return 1
+
+        monkeypatch.setattr(
+            DocumentAnalysisStage,
+            "_submit_artifacts",
+            _fake_submit_artifacts,
+        )
+        monkeypatch.setattr(
+            DocumentAnalysisStage,
+            "_analyse_ole",
+            lambda self, exec_ctx, findings, artifacts, extract_dir: artifacts.append(
+                {"path": str(p), "name": "embedded.bin", "origin_path": "embedded.bin"}
+            ),
+        )
+        monkeypatch.setattr(
+            DocumentAnalysisStage,
+            "_analyse_vba",
+            lambda self, exec_ctx, findings: None,
+        )
+        monkeypatch.setattr(
+            "malscan_worker.stages.document_analysis.detect_document_type",
+            lambda file_path, mime: "ole",
+        )
+
+        stage = DocumentAnalysisStage()
+        result = await stage.execute(ctx)
+
+        assert result.status == "ok"
+        assert result.findings["sub_jobs_created"] == 0
+        assert submit_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_submitted_artifacts_keep_original_root_job_id(self, tmp_path, monkeypatch):
+        p = tmp_path / "sample.doc"
+        p.write_bytes(b"not-used")
+        ctx = _make_job_context(p)
+        original_root_job_id = str(uuid.uuid4())
+        ctx.root_job_id = original_root_job_id  # type: ignore[attr-defined]
+
+        create_calls = []
+        submit_calls = []
+
+        async def _fake_create_artifact(**kwargs):
+            create_calls.append(kwargs)
+            return {"id": "root-artifact" if len(create_calls) == 1 else "child-artifact"}
+
+        class _Submitter:
+            async def submit_subjob(self, **kwargs):
+                submit_calls.append(kwargs)
+                return "subjob-1"
+
+        async def _fake_get_submitter():
+            return _Submitter()
+
+        monkeypatch.setattr(
+            "malscan_worker.stages.document_analysis.create_artifact",
+            _fake_create_artifact,
+        )
+        monkeypatch.setattr(
+            "malscan_worker.stages.document_analysis.InternalJobSubmitter.get_instance",
+            _fake_get_submitter,
+        )
+
+        stage = DocumentAnalysisStage()
+        submitted = await stage._submit_artifacts(
+            ctx,
+            [{"path": str(p), "name": "embedded.bin", "origin_path": "embedded.bin"}],
+        )
+
+        assert submitted == 1
+        assert create_calls[0]["root_job_id"] == original_root_job_id
+        assert create_calls[1]["root_job_id"] == original_root_job_id
+        assert submit_calls[0]["root_job_id"] == original_root_job_id

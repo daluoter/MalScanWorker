@@ -34,8 +34,8 @@ User → GitHub Pages (React) → Nginx Reverse Proxy
 **Data Flow:**
 1. Users upload files through the frontend → Nginx routes requests based on path
 2. **Go Ingest Service** handles file uploads: stores files in MinIO, writes job metadata to PostgreSQL, and publishes tasks to RabbitMQ
-3. **Worker(s)** consume tasks from RabbitMQ, run ClamAV / YARA scans, and write analysis reports back to the database
-4. **FastAPI Backend** provides job status queries and report retrieval APIs
+3. **Worker(s)** consume tasks from RabbitMQ, run ClamAV / YARA / format-analysis / deobfuscation and related stages, compute direct/local artifact risk, and write reports back to the database
+4. **FastAPI Backend** provides job status queries and report retrieval APIs, and applies descendant tree-aware risk rollup when `/reports/{job_id}` is read
 
 ## Quick Start
 
@@ -385,8 +385,10 @@ When an uploaded archive requires a password, the system enters a password flow 
 - Parent report is shown only after the full descendant job tree reaches terminal states
   - If descendants are still running, `GET /api/v1/reports/{job_id}` returns `409`
   - Frontend displays a waiting state and polls until report is ready
+  - The final `score`, `risk_level`, and `risk` block reflect the full artifact-tree rollup, not just the root file's local scan
 - Successful extraction: report includes archive extraction info (file count, sub-jobs, total extracted size)
 - Failed extraction: report shows a red extraction-failed banner
+- If the password is wrong 3 times, the final report keeps `verdict = "unknown"` and returns a conservative zeroed `risk` block instead of mislabeling the file as `clean`
 - Child Job/Report pages include a "back to parent analysis" entry
 
 ---
@@ -452,6 +454,62 @@ Instead, it is integrated through an adapter/shim (`OfficeAnalyzerAdapter`):
 
 ---
 
+## Multi-Signal Risk Scoring and Report Fields
+
+The system now uses evidence-driven multi-signal risk scoring instead of the earlier thin `verdict/score` logic.
+
+### Risk Calculation Flow
+
+- The worker computes only direct/local risk for the current artifact when a job finishes
+- The backend recomputes canonical tree-aware risk on `GET /api/v1/reports/{job_id}` after all descendants are complete
+- This prevents parent reports from going stale when risky child artifacts finish later
+
+### Main Signal Sources
+
+- ClamAV signatures
+- YARA metadata-based classification
+- raw IOC extraction
+- structured `format-analysis` indicators
+- deobfuscation evidence
+- sandbox behaviors
+- descendant inheritance from the artifact tree
+
+### Compatibility Fields
+
+- Top-level `verdict` is retained as the legacy compatibility field
+- Top-level `score` remains a legacy-compatible alias of final `risk_score`
+- Compatibility mapping:
+  - `clean -> clean`
+  - `low / medium / high -> suspicious`
+  - `malicious -> malicious`
+
+### New Risk Fields
+
+- Top-level `risk_level`: `clean | low | medium | high | malicious`
+- Top-level `risk` block includes:
+  - `policy_version`
+  - `risk_score`
+  - `risk_level`
+  - `legacy_verdict`
+  - `malicious_gate_open`
+  - `high_gate_open`
+  - `independent_source_count`
+  - `breakdown`
+  - `evidence`
+  - `top_evidence`
+  - `descendant_summary`
+
+### Artifact Tree Risk Fields
+
+- `artifact_tree` nodes now expose:
+  - `verdict`
+  - `score`
+  - `risk_level`
+  - `policy_version`
+- The root `artifact_tree` node is kept consistent with the final top-level rolled-up report risk so clients do not see conflicting root-artifact severity in the same payload
+
+---
+
 ## API Endpoints
 
 | Method | Path | Service | Description |
@@ -459,7 +517,7 @@ Instead, it is integrated through an adapter/shim (`OfficeAnalyzerAdapter`):
 | POST | `/api/v1/files` | Go Ingest Service | Upload a file for analysis |
 | GET | `/api/v1/jobs/{job_id}` | FastAPI | Query analysis status |
 | POST | `/api/v1/jobs/{job_id}/password` | FastAPI | Submit archive password (max 3 attempts) |
-| GET | `/api/v1/reports/{job_id}` | FastAPI | Retrieve analysis report |
+| GET | `/api/v1/reports/{job_id}` | FastAPI | Retrieve the final tree-aware analysis report, including `risk`, `risk_level`, and the artifact tree |
 
 ---
 

@@ -82,7 +82,7 @@ class ArchiveExtractStage(Stage):
         # --- Create root artifact if depth-0 and no artifact context yet ----
         root_artifact_id = ctx.root_artifact_id
         parent_artifact_id = ctx.artifact_id
-        root_job_id = ctx.job_id
+        root_job_id = ctx.root_job_id or ctx.job_id
 
         if not root_artifact_id and ctx.job:
             root_art = await create_artifact(
@@ -94,11 +94,13 @@ class ArchiveExtractStage(Stage):
                 original_filename=ctx.original_filename,
                 extraction_source="archive-extract",
                 archive_type=handler.name,
-                root_job_id=ctx.job_id,
+                root_job_id=root_job_id,
                 job_id=ctx.job_id,
             )
             root_artifact_id = root_art["id"]
             parent_artifact_id = root_artifact_id
+            ctx.root_artifact_id = root_artifact_id
+            ctx.artifact_id = root_artifact_id
 
         # --- Extract with timeout -------------------------------------------
         extract_dir = Path(f"/tmp/{ctx.job_id}/extract")
@@ -197,6 +199,7 @@ class ArchiveExtractStage(Stage):
                         parent_job_depth=ctx.job.depth,
                         artifact_id=art["id"],
                         root_artifact_id=root_artifact_id,
+                        root_job_id=root_job_id,
                         ancestor_hashes=ancestor_hashes | {ctx.sha256},
                     )
                     if sub_job_id:

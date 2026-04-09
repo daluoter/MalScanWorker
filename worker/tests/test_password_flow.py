@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from malscan.scoring.policy import POLICY_VERSION
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.stages.base import StageContext
 
@@ -75,14 +76,52 @@ async def test_consumer_password_required_updates_status_and_ack(mocker):
     message.reject.assert_not_awaited()
 
 
+def test_build_password_attempts_exhausted_report_has_zero_risk_block() -> None:
+    from malscan_worker.reporting import build_password_attempts_exhausted_report
+
+    report = build_password_attempts_exhausted_report(
+        {
+            "job_id": "33333333-3333-3333-3333-333333333333",
+            "file_id": "44444444-4444-4444-4444-444444444444",
+            "sha256": "deadbeef",
+            "original_filename": "secret.zip",
+        }
+    )
+
+    assert report["verdict"] == "unknown"
+    assert report["score"] == 0
+    assert report["risk_level"] == "clean"
+    assert report["risk"] == {
+        "policy_version": POLICY_VERSION,
+        "risk_score": 0,
+        "risk_level": "clean",
+        "legacy_verdict": "unknown",
+        "malicious_gate_open": False,
+        "high_gate_open": False,
+        "independent_source_count": 0,
+        "breakdown": {
+            "local_score": 0,
+            "inherited_score": 0,
+            "synergy_bonus": 0,
+            "dampener": 0,
+            "final_score": 0,
+        },
+        "evidence": [],
+        "top_evidence": [],
+        "descendant_summary": {},
+    }
+
+
 @pytest.mark.asyncio
 async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack(mocker):
     from malscan_worker import consumer
 
+    artifact_id = "99999999-0000-0000-0000-000000000000"
     message = _FakeMessage(
         {
             "job_id": "33333333-3333-3333-3333-333333333333",
             "file_id": "44444444-4444-4444-4444-444444444444",
+            "artifact_id": artifact_id,
             "sha256": "deadbeef",
             "original_filename": "secret.zip",
         }
@@ -104,17 +143,47 @@ async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack
     update_result = mocker.patch(
         "malscan_worker.consumer.update_job_result_strict", new_callable=AsyncMock
     )
+    update_artifact_risk = mocker.patch(
+        "malscan_worker.consumer.update_artifact_risk", new_callable=AsyncMock, create=True
+    )
 
     await consumer.process_message(message)
 
     update_result.assert_awaited_once()
     saved_result = update_result.await_args.args[1]
     assert saved_result["verdict"] == "unknown"
+    assert saved_result["risk_level"] == "clean"
+    assert saved_result["risk"] == {
+        "policy_version": POLICY_VERSION,
+        "risk_score": 0,
+        "risk_level": "clean",
+        "legacy_verdict": "unknown",
+        "malicious_gate_open": False,
+        "high_gate_open": False,
+        "independent_source_count": 0,
+        "breakdown": {
+            "local_score": 0,
+            "inherited_score": 0,
+            "synergy_bonus": 0,
+            "dampener": 0,
+            "final_score": 0,
+        },
+        "evidence": [],
+        "top_evidence": [],
+        "descendant_summary": {},
+    }
     assert (
         saved_result["results"]["archive_extract"]["reason"]
         == "Archive extraction failed after 3 incorrect password attempts"
     )
     assert saved_result["results"]["archive_extract"]["extraction_failed"] is True
+    update_artifact_risk.assert_awaited_once_with(
+        artifact_id=artifact_id,
+        verdict="unknown",
+        score=0,
+        risk_level="clean",
+        policy_version=POLICY_VERSION,
+    )
 
     update_status.assert_any_await(
         "33333333-3333-3333-3333-333333333333",
@@ -271,6 +340,48 @@ async def test_consumer_exhausted_report_write_failure_not_done_and_requeues(moc
         )
     message.ack.assert_not_awaited()
     message.reject.assert_awaited_once_with(requeue=True)
+
+
+@pytest.mark.asyncio
+async def test_consumer_exhausted_artifact_risk_failure_still_marks_done_and_acks(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "abababab-abab-abab-abab-abababababab",
+            "file_id": "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd",
+            "artifact_id": "efefefef-efef-efef-efef-efefefefefef",
+            "sha256": "deadbeef",
+            "original_filename": "secret.zip",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        side_effect=ArchiveWrongPasswordError("zip"),
+    )
+    mocker.patch(
+        "malscan_worker.consumer.increment_password_attempts",
+        new_callable=AsyncMock,
+        return_value=3,
+    )
+    mocker.patch("malscan_worker.consumer.update_job_result_strict", new_callable=AsyncMock)
+    mocker.patch(
+        "malscan_worker.consumer.update_artifact_risk",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("artifact update failed"),
+        create=True,
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status", new_callable=AsyncMock
+    )
+
+    await consumer.process_message(message)
+
+    update_status.assert_any_await("abababab-abab-abab-abab-abababababab", "done")
+    message.ack.assert_awaited_once()
+    message.reject.assert_not_awaited()
 
 
 @pytest.mark.asyncio

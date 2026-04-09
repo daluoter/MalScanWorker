@@ -26,6 +26,9 @@ from malscan.schemas.requests import (
     ReportResponse,
     UploadResponse,
 )
+from malscan.scoring.models import RiskDecision, ScoreBreakdown
+from malscan.scoring.policy import POLICY_VERSION
+from malscan.scoring.tree import merge_with_descendants
 from malscan.storage import upload_file_path as upload_to_minio
 
 router = APIRouter()
@@ -33,6 +36,111 @@ settings = get_settings()
 log = structlog.get_logger()
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+
+
+def _risk_level_from_score(score: int) -> str:
+    if score >= 85:
+        return "malicious"
+    if score >= 60:
+        return "high"
+    if score >= 30:
+        return "medium"
+    if score >= 10:
+        return "low"
+    return "clean"
+
+
+def _infer_level_from_legacy(verdict: str | None, score: int) -> str:
+    if verdict == "malicious":
+        return "malicious"
+    if verdict == "clean":
+        return "clean" if score == 0 else _risk_level_from_score(score)
+    if verdict == "suspicious":
+        return _risk_level_from_score(score) if score > 0 else "medium"
+    return _risk_level_from_score(score)
+
+
+def _normalize_risk_collection(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _normalize_risk_mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _ensure_report_risk_shape(report: dict[str, Any]) -> dict[str, Any]:
+    """Backfill risk fields for legacy stored reports."""
+    score = int(report.get("score") or 0)
+    verdict = str(report.get("verdict") or "clean")
+    risk = report.get("risk")
+
+    if isinstance(risk, dict):
+        risk_score = int(risk.get("risk_score") or score)
+        legacy_verdict = str(risk.get("legacy_verdict") or verdict)
+        risk_level = str(
+            risk.get("risk_level")
+            or report.get("risk_level")
+            or _infer_level_from_legacy(legacy_verdict, risk_score)
+        )
+        breakdown = risk.get("breakdown")
+        if not isinstance(breakdown, dict):
+            breakdown = {}
+        risk["policy_version"] = str(risk.get("policy_version") or POLICY_VERSION)
+        risk["risk_score"] = risk_score
+        risk["risk_level"] = risk_level
+        risk["legacy_verdict"] = legacy_verdict
+        risk["malicious_gate_open"] = bool(
+            risk.get("malicious_gate_open", risk_level == "malicious")
+        )
+        risk["high_gate_open"] = bool(
+            risk.get("high_gate_open", risk_level in {"high", "malicious"})
+        )
+        risk["independent_source_count"] = int(risk.get("independent_source_count") or 0)
+        breakdown.setdefault("local_score", risk_score)
+        breakdown.setdefault("inherited_score", 0)
+        breakdown.setdefault("synergy_bonus", 0)
+        breakdown.setdefault("dampener", 0)
+        breakdown.setdefault("final_score", risk_score)
+        risk["breakdown"] = breakdown
+        risk["evidence"] = _normalize_risk_collection(risk.get("evidence"))
+        risk["top_evidence"] = _normalize_risk_collection(risk.get("top_evidence"))
+        risk["descendant_summary"] = _normalize_risk_mapping(risk.get("descendant_summary"))
+        report["risk_level"] = risk_level
+        report["risk"] = risk
+        return report
+
+    risk_level = str(report.get("risk_level") or _infer_level_from_legacy(verdict, score))
+    report["risk_level"] = risk_level
+    report["risk"] = {
+        "policy_version": POLICY_VERSION,
+        "risk_score": score,
+        "risk_level": risk_level,
+        "legacy_verdict": verdict,
+        "malicious_gate_open": risk_level == "malicious",
+        "high_gate_open": risk_level in {"high", "malicious"},
+        "independent_source_count": 0,
+        "breakdown": {
+            "local_score": score,
+            "inherited_score": 0,
+            "synergy_bonus": 0,
+            "dampener": 0,
+            "final_score": score,
+        },
+        "evidence": [],
+        "top_evidence": [],
+        "descendant_summary": {},
+    }
+    return report
+
+
+def _artifact_level(node: dict[str, Any]) -> str:
+    level = node.get("risk_level")
+    if isinstance(level, str) and level:
+        return level
+
+    score = int(node.get("score") or 0)
+    verdict = node.get("verdict")
+    return _infer_level_from_legacy(str(verdict) if verdict is not None else None, score)
 
 
 def _sanitize_filename(filename: str) -> str:
@@ -519,6 +627,7 @@ async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | Non
 
     nodes: dict[str, dict] = {}
     root = None
+    extra_roots: list[dict[str, Any]] = []
     for art in artifacts:
         node = {
             "id": str(art.id),
@@ -533,16 +642,103 @@ async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | Non
             "extraction_note": art.extraction_note,
             "verdict": art.verdict,
             "score": art.score,
+            "risk_level": art.risk_level,
+            "policy_version": art.policy_version,
             "job_id": str(art.job_id) if art.job_id else None,
+            "synthetic_root": False,
             "children": [],
         }
         nodes[str(art.id)] = node
         if art.parent_id and str(art.parent_id) in nodes:
             nodes[str(art.parent_id)]["children"].append(node)
         if art.depth == 0:
-            root = node
+            if root is None:
+                root = node
+            else:
+                node["synthetic_root"] = True
+                extra_roots.append(node)
+
+    if root is not None and extra_roots:
+        root["children"].extend(extra_roots)
 
     return root
+
+
+def _apply_tree_risk_rollup(
+    report: dict[str, Any],
+    artifact_tree: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply canonical descendant rollup to a stored local-risk report."""
+    report = _ensure_report_risk_shape(report)
+    risk = report.get("risk")
+    if not artifact_tree or not isinstance(risk, dict):
+        return report
+
+    breakdown = risk.get("breakdown")
+    if not isinstance(breakdown, dict):
+        return report
+
+    local = RiskDecision(
+        risk_score=int(risk.get("risk_score") or 0),
+        risk_level=str(risk.get("risk_level") or "clean"),
+        legacy_verdict=str(risk.get("legacy_verdict") or report.get("verdict") or "clean"),
+        evidence=[],
+        top_evidence=[],
+        breakdown=ScoreBreakdown(
+            local_score=int(breakdown.get("local_score") or 0),
+            inherited_score=int(breakdown.get("inherited_score") or 0),
+            synergy_bonus=int(breakdown.get("synergy_bonus") or 0),
+            dampener=int(breakdown.get("dampener") or 0),
+            final_score=int(breakdown.get("final_score") or 0),
+            malicious_gate_open=bool(risk.get("malicious_gate_open", False)),
+            high_gate_open=bool(risk.get("high_gate_open", False)),
+            independent_source_count=int(risk.get("independent_source_count") or 0),
+        ),
+        policy_version=str(risk.get("policy_version") or POLICY_VERSION),
+    )
+
+    descendants: list[dict[str, Any]] = []
+    root_depth = int(artifact_tree.get("depth") or 0)
+
+    def _collect(node: dict[str, Any]) -> None:
+        for child in node.get("children", []):
+            if child.get("synthetic_root"):
+                continue
+            if not child.get("synthetic_root"):
+                descendants.append(
+                    {
+                        "artifact_id": child["id"],
+                        "sha256": child["sha256"],
+                        "relative_depth": max(1, int(child.get("depth") or 0) - root_depth),
+                        "risk_level": _artifact_level(child),
+                        "risk_score": int(child.get("score") or 0),
+                        "origin_path": child.get("origin_path"),
+                        "verdict": child.get("verdict"),
+                        "extraction_note": child.get("extraction_note"),
+                    }
+                )
+            _collect(child)
+
+    _collect(artifact_tree)
+    final = merge_with_descendants(local=local, descendants=descendants)
+
+    report["score"] = final.risk_score
+    report["verdict"] = final.legacy_verdict
+    report["risk_level"] = final.risk_level
+    risk["risk_score"] = final.risk_score
+    risk["risk_level"] = final.risk_level
+    risk["legacy_verdict"] = final.legacy_verdict
+    risk["malicious_gate_open"] = final.breakdown.malicious_gate_open
+    risk["high_gate_open"] = final.breakdown.high_gate_open
+    risk["independent_source_count"] = final.breakdown.independent_source_count
+    breakdown["inherited_score"] = final.breakdown.inherited_score
+    breakdown["final_score"] = final.breakdown.final_score
+    risk["descendant_summary"] = final.descendant_summary
+    artifact_tree["score"] = final.risk_score
+    artifact_tree["verdict"] = final.legacy_verdict
+    artifact_tree["risk_level"] = final.risk_level
+    artifact_tree["policy_version"] = final.policy_version
+    return report
 
 
 async def _count_pending_descendants(root_job_id: str, db: AsyncSession) -> int:
@@ -637,11 +833,13 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
 
     # Return stored result with created_at and child_jobs
     report = dict(job.result)
+    report = _ensure_report_risk_shape(report)
     report["created_at"] = job.created_at.isoformat()
     report["parent_job_id"] = str(job.parent_job_id) if job.parent_job_id else None
     report["child_jobs"] = child_jobs
 
     # Build artifact tree (returns None for non-archive files)
     report["artifact_tree"] = await _build_artifact_tree(str(job.id), db)
+    report = _apply_tree_risk_rollup(report, report["artifact_tree"])
 
     return report

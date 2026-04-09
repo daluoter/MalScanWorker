@@ -3,6 +3,7 @@
 import uuid
 
 from malscan.models import File, Job, JobStatus
+from malscan.models.artifact import Artifact
 
 
 def test_file_model_creation():
@@ -53,3 +54,8 @@ def test_job_status_enum():
     assert JobStatus.PASSWORD_REQUIRED.value == "password_required"
     assert JobStatus.DONE.value == "done"
     assert JobStatus.FAILED.value == "failed"
+
+
+def test_artifact_model_includes_risk_level_and_policy_version_columns():
+    assert "risk_level" in Artifact.__table__.c
+    assert "policy_version" in Artifact.__table__.c

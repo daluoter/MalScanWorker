@@ -14,7 +14,7 @@ from malscan.storage import get_minio_client
 from malscan.storage import upload_file_path as upload_to_minio
 from malscan_worker.db import _engine
 from minio.error import S3Error
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger()
@@ -25,9 +25,9 @@ class InternalJobSubmitter:
     """Singleton class to manage MQ connections and submit sub-jobs safely."""
 
     _instance: Optional["InternalJobSubmitter"] = None
-    _connection: Optional[aio_pika.abc.AbstractRobustConnection] = None
-    _channel: Optional[aio_pika.abc.AbstractChannel] = None
-    _exchange: Optional[aio_pika.abc.AbstractExchange] = None
+    _connection: aio_pika.abc.AbstractRobustConnection | None = None
+    _channel: aio_pika.abc.AbstractChannel | None = None
+    _exchange: aio_pika.abc.AbstractExchange | None = None
 
     def __new__(cls) -> "InternalJobSubmitter":
         if cls._instance is None:
@@ -94,6 +94,7 @@ class InternalJobSubmitter:
         parent_job_depth: int,
         artifact_id: str | None = None,
         root_artifact_id: str | None = None,
+        root_job_id: str | None = None,
         ancestor_hashes: set[str] | None = None,
     ) -> str | None:
         """Submit a new sub-job for analysis.
@@ -194,6 +195,25 @@ class InternalJobSubmitter:
 
             await db.commit()
 
+            if artifact_id is not None:
+                try:
+                    await db.execute(
+                        text("UPDATE artifacts SET job_id = :job_id WHERE id = :artifact_id"),
+                        {
+                            "job_id": UUID(sub_job_id),
+                            "artifact_id": UUID(artifact_id),
+                        },
+                        execution_options={"artifact_job_link": True},
+                    )
+                    await db.commit()
+                except Exception as e:
+                    log.warning(
+                        "artifact_job_link_update_failed",
+                        artifact_id=artifact_id,
+                        job_id=sub_job_id,
+                        error=str(e),
+                    )
+
         log.info(
             "sub_job_created",
             job_id=sub_job_id,
@@ -211,6 +231,7 @@ class InternalJobSubmitter:
             "original_filename": filename,
             "artifact_id": artifact_id,
             "root_artifact_id": root_artifact_id,
+            "root_job_id": root_job_id,
             "ancestor_hashes": list(ancestor_hashes or set()),
         }
 

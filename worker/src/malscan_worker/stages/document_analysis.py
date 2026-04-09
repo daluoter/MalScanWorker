@@ -370,7 +370,7 @@ class DocumentAnalysisStage(Stage):
 
         # --- submit extracted artifacts as sub-jobs ---
         sub_jobs_created = 0
-        if artifacts_on_disk and ctx.job:
+        if artifacts_on_disk and ctx.job and not ctx.skip_artifact_submission:
             sub_jobs_created = await self._submit_artifacts(ctx, artifacts_on_disk)
 
         findings["sub_jobs_created"] = sub_jobs_created
@@ -1007,6 +1007,7 @@ class DocumentAnalysisStage(Stage):
 
         parent_job_id = str(ctx.job.id) if ctx.job else ctx.job_id
         parent_job_depth = ctx.job.depth if ctx.job else 0
+        root_job_id = ctx.root_job_id or ctx.job_id
 
         # Create root artifact if needed (depth=0 with embedded objects)
         root_artifact_id = ctx.root_artifact_id
@@ -1021,11 +1022,13 @@ class DocumentAnalysisStage(Stage):
                 size=os.path.getsize(ctx.file_path) if ctx.file_path else 0,
                 original_filename=ctx.original_filename,
                 extraction_source="document-analysis",
-                root_job_id=ctx.job_id,
+                root_job_id=root_job_id,
                 job_id=ctx.job_id,
             )
             root_artifact_id = root_art["id"]
             parent_artifact_id = root_artifact_id
+            ctx.root_artifact_id = root_artifact_id
+            ctx.artifact_id = root_artifact_id
 
         submitter = await InternalJobSubmitter.get_instance()
         submitted = 0
@@ -1062,7 +1065,7 @@ class DocumentAnalysisStage(Stage):
                 original_filename=original_name,
                 origin_path=origin_path,
                 extraction_source="document-analysis",
-                root_job_id=ctx.job_id,
+                root_job_id=root_job_id,
                 verdict="skipped" if skip else None,
                 extraction_note="duplicate_within_extraction" if skip else None,
             )
@@ -1080,6 +1083,7 @@ class DocumentAnalysisStage(Stage):
                 parent_job_depth=parent_job_depth,
                 artifact_id=artifact_record["id"],
                 root_artifact_id=root_artifact_id,
+                root_job_id=root_job_id,
                 ancestor_hashes=ancestor_hashes | {ctx.sha256},
             )
             if sub_job_id:

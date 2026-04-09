@@ -26,7 +26,9 @@ class StageContext:
     db: AsyncSession | None = field(default=None)
     artifact_id: str | None = None
     root_artifact_id: str | None = None
+    root_job_id: str | None = None
     ancestor_hashes: set[str] = field(default_factory=set)
+    skip_artifact_submission: bool = False
 
 
 @dataclass

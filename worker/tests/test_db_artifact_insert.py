@@ -48,3 +48,75 @@ async def test_create_artifact_includes_created_at_for_raw_insert(monkeypatch):
 
     assert "created_at" in captured["params"]
     assert captured["params"]["created_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_risk_includes_risk_level_and_policy_version(monkeypatch):
+    captured: dict = {}
+
+    class DummySession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, stmt, params):
+            captured["params"] = params
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(worker_db, "AsyncSession", DummySession)
+
+    await worker_db.update_artifact_risk(
+        artifact_id=str(uuid.uuid4()),
+        verdict="suspicious",
+        score=65,
+        risk_level="medium",
+        policy_version="msrs-v1",
+    )
+
+    assert captured["params"]["risk_level"] == "medium"
+    assert captured["params"]["policy_version"] == "msrs-v1"
+
+
+@pytest.mark.asyncio
+async def test_update_artifact_verdict_shim_preserves_verdict_and_score(monkeypatch):
+    captured: dict = {}
+
+    class DummySession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def execute(self, stmt, params):
+            captured["params"] = params
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(worker_db, "AsyncSession", DummySession)
+
+    await worker_db.update_artifact_verdict(
+        artifact_id=str(uuid.uuid4()),
+        verdict="malicious",
+        score=90,
+    )
+
+    assert captured["params"]["verdict"] == "malicious"
+    assert captured["params"]["score"] == 90
