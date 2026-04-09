@@ -224,6 +224,95 @@ async def test_indicator_severity_mapping_and_risk_score(
 
 
 @pytest.mark.asyncio
+async def test_analyze_adds_macro_and_embedded_object_indicators(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "sample.doc"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ole",
+        "parser_findings": [],
+        "embedded_objects": [{"index": 0, "is_pe": True, "size": 321}],
+        "extracted_artifacts": [],
+        "suspicious_keywords": ["Shell", "CreateObject", "WScript.Shell"],
+        "macros": {
+            "found": True,
+            "auto_exec": True,
+            "suspicious": True,
+            "sources": [{"module": "Module1", "auto_exec": True}],
+        },
+        "errors": [],
+        "exploit_indicators": [],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    indicator_types = {str(ind["type"]) for ind in result.indicators}
+    assert "macro_auto_exec" in indicator_types
+    assert "embedded_executable" in indicator_types
+    assert result.risk_score == 16
+
+
+@pytest.mark.asyncio
+async def test_analyze_adds_low_severity_indicator_for_benign_macros(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "sample.doc"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ole",
+        "parser_findings": [],
+        "embedded_objects": [],
+        "extracted_artifacts": [],
+        "suspicious_keywords": [],
+        "macros": {
+            "found": True,
+            "auto_exec": False,
+            "suspicious": False,
+            "sources": [{"module": "Module1", "auto_exec": False}],
+        },
+        "errors": [],
+        "exploit_indicators": [],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    assert result.indicators == [
+        {
+            "type": "macro_presence",
+            "severity": "low",
+            "detail": "Office document contains macros",
+            "evidence": {"macros": findings["macros"]},
+        }
+    ]
+    assert result.risk_score == 3
+
+
+@pytest.mark.asyncio
 async def test_analyze_uses_passed_file_path_over_ctx_file_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

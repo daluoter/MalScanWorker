@@ -34,8 +34,8 @@ User → GitHub Pages (React) → Nginx Reverse Proxy
 **資料流：**
 1. 使用者透過前端上傳檔案 → Nginx 依據路由分流
 2. **Go Ingest Service** 處理檔案上傳：存入 MinIO、寫入 job metadata 至 PostgreSQL、發布任務至 RabbitMQ
-3. **Worker(s)** 從 RabbitMQ 消費任務，執行 ClamAV / YARA 掃描，將分析報告寫回資料庫
-4. **FastAPI Backend** 提供 job 狀態查詢與報告取得 API
+3. **Worker(s)** 從 RabbitMQ 消費任務，執行 ClamAV / YARA / format-analysis / deobfuscation 等分析，計算目前 artifact 的 direct/local risk，並將報告寫回資料庫
+4. **FastAPI Backend** 提供 job 狀態查詢與報告取得 API，並在讀取 `/reports/{job_id}` 時做 descendant tree-aware risk rollup
 
 ## 快速開始
 
@@ -385,8 +385,10 @@ docker compose up -d --build
 - 主報告會等整個 descendant job tree 完成後才顯示
   - 若仍有子任務進行中，`GET /api/v1/reports/{job_id}` 會回傳 `409`
   - 前端會顯示等待中狀態並自動輪詢，不會提早顯示未完成報告
+  - 回傳的最終 `score` / `risk_level` / `risk` 會反映整棵 artifact tree 的 rollup 結果，不只是一層 local scan
 - 解壓成功：報告顯示解壓資訊（檔案數、子任務數、解壓總大小）
 - 解壓失敗：報告顯示紅色橫幅提示
+- 若密碼連續錯誤 3 次，最終報告會保留 `verdict = "unknown"`，並附帶保守的零分 `risk` 區塊，避免把未完成分析誤標為 `clean`
 - 子檔案的 Job/Report 頁面提供「返回上一層分析」入口
 
 ---
@@ -454,6 +456,62 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 
 ---
 
+## 多訊號風險評分與報告欄位
+
+系統現在使用 evidence-driven 的多訊號風險評分，取代舊的單薄 `verdict/score` 判定。
+
+### 風險計算流程
+
+- Worker 在 job 完成時，只計算當前 artifact 的 direct/local risk
+- Backend 在 `GET /api/v1/reports/{job_id}` 且所有 descendants 完成後，使用同一套 scoring policy 做 canonical tree-aware rollup
+- 這樣可以避免 parent job 太早完成，導致 parent risk 沒有反映後續子檔案結果
+
+### 主要訊號來源
+
+- ClamAV signature
+- YARA metadata-based classification
+- raw IOC extraction
+- `format-analysis` structured indicators
+- deobfuscation evidence
+- sandbox behaviors
+- descendant inheritance（由 backend rollup）
+
+### 報告相容欄位
+
+- top-level `verdict` 仍保留為 legacy compatibility 欄位
+- top-level `score` 仍保留為 legacy-compatible alias（對應最終 `risk_score`）
+- compatibility mapping:
+  - `clean -> clean`
+  - `low / medium / high -> suspicious`
+  - `malicious -> malicious`
+
+### 新增風險欄位
+
+- top-level `risk_level`: `clean | low | medium | high | malicious`
+- top-level `risk` 區塊包含：
+  - `policy_version`
+  - `risk_score`
+  - `risk_level`
+  - `legacy_verdict`
+  - `malicious_gate_open`
+  - `high_gate_open`
+  - `independent_source_count`
+  - `breakdown`
+  - `evidence`
+  - `top_evidence`
+  - `descendant_summary`
+
+### Artifact Tree 風險欄位
+
+- `artifact_tree` 節點現在會帶出：
+  - `verdict`
+  - `score`
+  - `risk_level`
+  - `policy_version`
+- root `artifact_tree` node 會與頂層最終 report risk 保持一致，避免同一份報告內 root node 與 top-level verdict/risk 不一致
+
+---
+
 ## API 端點
 
 | 方法 | 路徑 | 處理服務 | 說明 |
@@ -461,7 +519,7 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 | POST | `/api/v1/files` | Go Ingest Service | 上傳檔案進行分析 |
 | GET | `/api/v1/jobs/{job_id}` | FastAPI | 查詢分析狀態 |
 | POST | `/api/v1/jobs/{job_id}/password` | FastAPI | 提交壓縮檔密碼（最多 3 次） |
-| GET | `/api/v1/reports/{job_id}` | FastAPI | 取得分析報告 |
+| GET | `/api/v1/reports/{job_id}` | FastAPI | 取得最終 tree-aware 分析報告（含 `risk`、`risk_level`、artifact tree） |
 
 ---
 

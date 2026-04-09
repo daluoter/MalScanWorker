@@ -467,6 +467,121 @@ async def test_duplicate_within_extraction_skips_second_duplicate_subjob(
 
 
 @pytest.mark.asyncio
+async def test_root_artifact_ids_are_written_back_to_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[{"path": str(artifact_path), "filename": "child.bin"}],
+            )
+
+    fake_submitter = _FakeSubmitter()
+
+    async def _fake_get_submitter() -> _FakeSubmitter:
+        return fake_submitter
+
+    created: list[dict[str, Any]] = []
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        created.append(kwargs)
+        return {"id": "root-artifact" if len(created) == 1 else "child-artifact"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert created[0]["parent_id"] is None
+    assert created[1]["parent_id"] == "root-artifact"
+    assert ctx.root_artifact_id == "root-artifact"
+    assert ctx.artifact_id == "root-artifact"
+
+
+@pytest.mark.asyncio
+async def test_submitted_artifacts_keep_original_root_job_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_path = tmp_path / "child.bin"
+    artifact_path.write_bytes(b"child payload")
+
+    class _Analyzer:
+        name = "pe"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="pe",
+                format_type="PE",
+                extracted_artifacts=[{"path": str(artifact_path), "filename": "child.bin"}],
+            )
+
+    submit_kwargs: list[dict[str, Any]] = []
+
+    class _TrackingSubmitter:
+        async def submit_subjob(self, **kwargs: Any) -> str:
+            submit_kwargs.append(kwargs)
+            return "subjob-1"
+
+    async def _fake_get_submitter() -> _TrackingSubmitter:
+        return _TrackingSubmitter()
+
+    created: list[dict[str, Any]] = []
+
+    async def _fake_create_artifact(**kwargs: Any) -> dict[str, str]:
+        created.append(kwargs)
+        return {"id": "artifact-root" if len(created) == 1 else "artifact-child"}
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.InternalJobSubmitter.get_instance",
+        _fake_get_submitter,
+    )
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.create_artifact",
+        _fake_create_artifact,
+    )
+
+    ctx = _ctx(tmp_path, with_job=True)
+    ctx.job_id = str(uuid.uuid4())
+    original_root_job_id = str(uuid.uuid4())
+    ctx.root_job_id = original_root_job_id  # type: ignore[attr-defined]
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    assert created[0]["root_job_id"] == original_root_job_id
+    assert created[1]["root_job_id"] == original_root_job_id
+    assert submit_kwargs[0]["root_job_id"] == original_root_job_id
+
+
+@pytest.mark.asyncio
 async def test_max_depth_guard_skips_artifact_creation_and_subjob_submission(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

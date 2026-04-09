@@ -35,12 +35,14 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
         return True
 
     async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
-        stage_ctx = replace(ctx, file_path=file_path)
+        stage_ctx = replace(ctx, file_path=file_path, skip_artifact_submission=True)
         stage_result = await DocumentAnalysisStage().execute(stage_ctx)
         findings = stage_result.findings
 
         raw_indicators = findings.get("exploit_indicators", [])
         indicators = self._convert_indicators(raw_indicators)
+        indicators.extend(self._macro_indicators(findings))
+        indicators.extend(self._embedded_object_indicators(findings))
 
         document_type = findings.get("document_type")
         if isinstance(document_type, str):
@@ -128,6 +130,85 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
             indicators.append(converted)
 
         return indicators
+
+    def _macro_indicators(self, findings: dict[str, Any]) -> list[AnalyzerIndicator]:
+        macros = findings.get("macros")
+        if not isinstance(macros, dict) or not macros.get("found"):
+            return []
+
+        suspicious_keywords = findings.get("suspicious_keywords")
+        if not isinstance(suspicious_keywords, list):
+            suspicious_keywords = []
+
+        indicators: list[AnalyzerIndicator] = []
+        if macros.get("auto_exec") and (macros.get("suspicious") or suspicious_keywords):
+            indicators.append(
+                {
+                    "type": "macro_auto_exec",
+                    "severity": "medium",
+                    "detail": "Office document contains auto-exec macros with suspicious APIs",
+                    "evidence": {
+                        "macros": macros,
+                        "suspicious_keywords": suspicious_keywords[:10],
+                    },
+                }
+            )
+            return indicators
+
+        if macros.get("auto_exec"):
+            indicators.append(
+                {
+                    "type": "macro_auto_exec",
+                    "severity": "medium",
+                    "detail": "Office document contains auto-exec macros",
+                    "evidence": {"macros": macros},
+                }
+            )
+            return indicators
+
+        if macros.get("suspicious") or suspicious_keywords:
+            indicators.append(
+                {
+                    "type": "suspicious_launcher",
+                    "severity": "medium",
+                    "detail": "Office document macros use suspicious execution keywords",
+                    "evidence": {
+                        "macros": macros,
+                        "suspicious_keywords": suspicious_keywords[:10],
+                    },
+                }
+            )
+            return indicators
+
+        indicators.append(
+            {
+                "type": "macro_presence",
+                "severity": "low",
+                "detail": "Office document contains macros",
+                "evidence": {"macros": macros},
+            }
+        )
+        return indicators
+
+    def _embedded_object_indicators(self, findings: dict[str, Any]) -> list[AnalyzerIndicator]:
+        embedded_objects = findings.get("embedded_objects")
+        if not isinstance(embedded_objects, list) or not embedded_objects:
+            return []
+
+        for obj in embedded_objects:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("is_pe"):
+                return [
+                    {
+                        "type": "embedded_executable",
+                        "severity": "medium",
+                        "detail": "Office document embeds an executable object",
+                        "evidence": {"embedded_object": obj},
+                    }
+                ]
+
+        return []
 
     def _map_severity(self, indicator_type: str, item: dict[str, Any]) -> str:
         indicator_type_l = indicator_type.lower()

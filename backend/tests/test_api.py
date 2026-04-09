@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
+from malscan.api.routes import _build_artifact_tree
 from malscan.models import JobStatus
 
 
@@ -218,6 +220,26 @@ def test_get_report_success(client: TestClient, mock_db_session: AsyncMock):
         },
         "verdict": "clean",
         "score": 0,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 0,
+            "risk_level": "clean",
+            "legacy_verdict": "clean",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 0,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 0,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
         "results": {
             "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
             "yara_hits": [],
@@ -314,6 +336,868 @@ def test_get_report_waits_for_pending_descendants(client: TestClient, mock_db_se
 
     assert response.status_code == 409
     assert "Report not ready" in response.json()["detail"]
+
+
+def test_get_report_returns_risk_level_and_risk_block(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "sample.bin",
+        },
+        "verdict": "suspicious",
+        "score": 59,
+        "risk_level": "medium",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 59,
+            "risk_level": "medium",
+            "legacy_verdict": "suspicious",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 1,
+            "breakdown": {
+                "local_score": 59,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 59,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "medium"
+    assert data["risk"]["risk_score"] == 59
+
+
+def test_get_report_recomputes_tree_risk_when_artifact_tree_exists(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/zip",
+            "size": 10,
+            "original_filename": "bundle.zip",
+        },
+        "verdict": "suspicious",
+        "score": 5,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 5,
+            "risk_level": "clean",
+            "legacy_verdict": "clean",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 5,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 5,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+
+    root_artifact = MagicMock()
+    root_artifact.id = uuid.uuid4()
+    root_artifact.parent_id = None
+    root_artifact.original_filename = "bundle.zip"
+    root_artifact.sha256 = "root"
+    root_artifact.mime = "application/zip"
+    root_artifact.size = 10
+    root_artifact.depth = 0
+    root_artifact.origin_path = None
+    root_artifact.extraction_source = "archive-extract"
+    root_artifact.archive_type = "zip"
+    root_artifact.extraction_note = None
+    root_artifact.verdict = "suspicious"
+    root_artifact.score = 5
+    root_artifact.job_id = job_id
+    root_artifact.risk_level = "clean"
+    root_artifact.policy_version = "msrs-v1"
+
+    child_artifact = MagicMock()
+    child_artifact.id = uuid.uuid4()
+    child_artifact.parent_id = root_artifact.id
+    child_artifact.original_filename = "payload.exe"
+    child_artifact.sha256 = "child"
+    child_artifact.mime = "application/octet-stream"
+    child_artifact.size = 20
+    child_artifact.depth = 1
+    child_artifact.origin_path = "payload.exe"
+    child_artifact.extraction_source = "archive-extract"
+    child_artifact.archive_type = None
+    child_artifact.extraction_note = None
+    child_artifact.verdict = "malicious"
+    child_artifact.score = 95
+    child_artifact.job_id = uuid.uuid4()
+    child_artifact.risk_level = "malicious"
+    child_artifact.policy_version = "msrs-v1"
+
+    mock_tree_result.scalars.return_value.all.return_value = [root_artifact, child_artifact]
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "high"
+    assert data["risk"]["breakdown"]["inherited_score"] == 35
+    assert data["artifact_tree"]["risk_level"] == "high"
+    assert data["artifact_tree"]["score"] == data["score"]
+    child = data["artifact_tree"]["children"][0]
+    assert child["risk_level"] == "malicious"
+    assert child["score"] == 95
+
+
+def test_get_report_backfills_risk_block_for_legacy_report_shape(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "legacy.bin",
+        },
+        "verdict": "malicious",
+        "score": 90,
+        "results": {
+            "av_result": {"engine": "clamav", "infected": True, "threat_name": "Win.Test"},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "malicious"
+    assert data["risk"]["risk_score"] == 90
+    assert data["risk"]["legacy_verdict"] == "malicious"
+    assert data["risk"]["breakdown"]["local_score"] == 90
+
+
+def test_get_report_rollup_uses_descendant_score_when_risk_level_is_missing(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/zip",
+            "size": 10,
+            "original_filename": "bundle.zip",
+        },
+        "verdict": "clean",
+        "score": 5,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 5,
+            "risk_level": "clean",
+            "legacy_verdict": "clean",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 5,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 5,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+
+    root_artifact = MagicMock()
+    root_artifact.id = uuid.uuid4()
+    root_artifact.parent_id = None
+    root_artifact.original_filename = "bundle.zip"
+    root_artifact.sha256 = "root"
+    root_artifact.mime = "application/zip"
+    root_artifact.size = 10
+    root_artifact.depth = 0
+    root_artifact.origin_path = None
+    root_artifact.extraction_source = "archive-extract"
+    root_artifact.archive_type = "zip"
+    root_artifact.extraction_note = None
+    root_artifact.verdict = "clean"
+    root_artifact.score = 5
+    root_artifact.job_id = job_id
+    root_artifact.risk_level = "clean"
+    root_artifact.policy_version = "msrs-v1"
+
+    child_artifact = MagicMock()
+    child_artifact.id = uuid.uuid4()
+    child_artifact.parent_id = root_artifact.id
+    child_artifact.original_filename = "payload.exe"
+    child_artifact.sha256 = "child"
+    child_artifact.mime = "application/octet-stream"
+    child_artifact.size = 20
+    child_artifact.depth = 1
+    child_artifact.origin_path = "payload.exe"
+    child_artifact.extraction_source = "archive-extract"
+    child_artifact.archive_type = None
+    child_artifact.extraction_note = None
+    child_artifact.verdict = "malicious"
+    child_artifact.score = 95
+    child_artifact.job_id = uuid.uuid4()
+    child_artifact.risk_level = None
+    child_artifact.policy_version = None
+
+    mock_tree_result.scalars.return_value.all.return_value = [root_artifact, child_artifact]
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "high"
+    assert data["risk"]["breakdown"]["inherited_score"] == 35
+
+
+def test_get_report_repairs_malformed_legacy_risk_containers(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "legacy.bin",
+        },
+        "verdict": "suspicious",
+        "score": 30,
+        "risk_level": "medium",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 30,
+            "risk_level": "medium",
+            "legacy_verdict": "suspicious",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 30,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 30,
+            },
+            "evidence": None,
+            "top_evidence": None,
+            "descendant_summary": None,
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk"]["evidence"] == []
+    assert data["risk"]["top_evidence"] == []
+    assert data["risk"]["descendant_summary"] == {}
+
+
+def test_get_report_excludes_synthetic_extra_roots_from_rollup(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/zip",
+            "size": 10,
+            "original_filename": "bundle.zip",
+        },
+        "verdict": "clean",
+        "score": 5,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 5,
+            "risk_level": "clean",
+            "legacy_verdict": "clean",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 5,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 5,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+
+    root_artifact = MagicMock()
+    root_artifact.id = uuid.uuid4()
+    root_artifact.parent_id = None
+    root_artifact.original_filename = "bundle.zip"
+    root_artifact.sha256 = "root"
+    root_artifact.mime = "application/zip"
+    root_artifact.size = 10
+    root_artifact.depth = 0
+    root_artifact.origin_path = None
+    root_artifact.extraction_source = "archive-extract"
+    root_artifact.archive_type = "zip"
+    root_artifact.extraction_note = None
+    root_artifact.verdict = "clean"
+    root_artifact.score = 5
+    root_artifact.job_id = job_id
+    root_artifact.risk_level = "clean"
+    root_artifact.policy_version = "msrs-v1"
+
+    sibling_root = MagicMock()
+    sibling_root.id = uuid.uuid4()
+    sibling_root.parent_id = None
+    sibling_root.original_filename = "embedded.docm"
+    sibling_root.sha256 = "sibling"
+    sibling_root.mime = "application/msword"
+    sibling_root.size = 20
+    sibling_root.depth = 0
+    sibling_root.origin_path = None
+    sibling_root.extraction_source = "document-analysis"
+    sibling_root.archive_type = None
+    sibling_root.extraction_note = None
+    sibling_root.verdict = "malicious"
+    sibling_root.score = 95
+    sibling_root.job_id = uuid.uuid4()
+    sibling_root.risk_level = "malicious"
+    sibling_root.policy_version = "msrs-v1"
+
+    mock_tree_result.scalars.return_value.all.return_value = [root_artifact, sibling_root]
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "clean"
+    assert data["risk"]["breakdown"]["inherited_score"] == 0
+    assert len(data["artifact_tree"]["children"]) == 1
+    assert data["artifact_tree"]["children"][0]["filename"] == "embedded.docm"
+
+
+def test_get_report_excludes_descendants_under_synthetic_extra_roots_from_rollup(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/zip",
+            "size": 10,
+            "original_filename": "bundle.zip",
+        },
+        "verdict": "clean",
+        "score": 5,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 5,
+            "risk_level": "clean",
+            "legacy_verdict": "clean",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 5,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 5,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+
+    root_artifact = MagicMock()
+    root_artifact.id = uuid.uuid4()
+    root_artifact.parent_id = None
+    root_artifact.original_filename = "bundle.zip"
+    root_artifact.sha256 = "root"
+    root_artifact.mime = "application/zip"
+    root_artifact.size = 10
+    root_artifact.depth = 0
+    root_artifact.origin_path = None
+    root_artifact.extraction_source = "archive-extract"
+    root_artifact.archive_type = "zip"
+    root_artifact.extraction_note = None
+    root_artifact.verdict = "clean"
+    root_artifact.score = 5
+    root_artifact.job_id = job_id
+    root_artifact.risk_level = "clean"
+    root_artifact.policy_version = "msrs-v1"
+
+    sibling_root = MagicMock()
+    sibling_root.id = uuid.uuid4()
+    sibling_root.parent_id = None
+    sibling_root.original_filename = "embedded.docm"
+    sibling_root.sha256 = "sibling"
+    sibling_root.mime = "application/msword"
+    sibling_root.size = 20
+    sibling_root.depth = 0
+    sibling_root.origin_path = None
+    sibling_root.extraction_source = "document-analysis"
+    sibling_root.archive_type = None
+    sibling_root.extraction_note = None
+    sibling_root.verdict = "clean"
+    sibling_root.score = 0
+    sibling_root.job_id = uuid.uuid4()
+    sibling_root.risk_level = "clean"
+    sibling_root.policy_version = "msrs-v1"
+
+    nested_child = MagicMock()
+    nested_child.id = uuid.uuid4()
+    nested_child.parent_id = sibling_root.id
+    nested_child.original_filename = "hidden-payload.exe"
+    nested_child.sha256 = "nested"
+    nested_child.mime = "application/octet-stream"
+    nested_child.size = 99
+    nested_child.depth = 1
+    nested_child.origin_path = "hidden-payload.exe"
+    nested_child.extraction_source = "document-analysis"
+    nested_child.archive_type = None
+    nested_child.extraction_note = None
+    nested_child.verdict = "malicious"
+    nested_child.score = 95
+    nested_child.job_id = uuid.uuid4()
+    nested_child.risk_level = "malicious"
+    nested_child.policy_version = "msrs-v1"
+
+    mock_tree_result.scalars.return_value.all.return_value = [
+        root_artifact,
+        sibling_root,
+        nested_child,
+    ]
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["risk_level"] == "clean"
+    assert data["risk"]["breakdown"]["inherited_score"] == 0
+    assert data["artifact_tree"]["children"][0]["children"][0]["filename"] == "hidden-payload.exe"
+
+
+def test_get_report_preserves_yara_metadata_fields(client: TestClient, mock_db_session: AsyncMock):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "sample.bin",
+        },
+        "verdict": "suspicious",
+        "score": 55,
+        "risk_level": "medium",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 55,
+            "risk_level": "medium",
+            "legacy_verdict": "suspicious",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 1,
+            "breakdown": {
+                "local_score": 55,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 55,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [
+                {
+                    "rule": "malware_family_rule",
+                    "namespace": "default",
+                    "description": "Known bad family",
+                    "classification": "malicious_family",
+                    "confidence": "high",
+                    "family": "TrickBot",
+                    "severity": "high",
+                    "author": "analyst",
+                    "tags": ["family"],
+                    "strings": ["$a"],
+                }
+            ],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    hit = data["results"]["yara_hits"][0]
+    assert hit["classification"] == "malicious_family"
+    assert hit["confidence"] == "high"
+    assert hit["family"] == "TrickBot"
+
+
+@pytest.mark.asyncio
+async def test_build_artifact_tree_preserves_multiple_depth_zero_roots() -> None:
+    root_one_id = uuid.uuid4()
+    root_two_id = uuid.uuid4()
+    child_id = uuid.uuid4()
+
+    root_one = MagicMock()
+    root_one.id = root_one_id
+    root_one.parent_id = None
+    root_one.original_filename = "bundle.zip"
+    root_one.sha256 = "root-one"
+    root_one.mime = "application/zip"
+    root_one.size = 10
+    root_one.depth = 0
+    root_one.origin_path = None
+    root_one.extraction_source = "archive-extract"
+    root_one.archive_type = "zip"
+    root_one.extraction_note = None
+    root_one.verdict = "clean"
+    root_one.score = 5
+    root_one.risk_level = "clean"
+    root_one.policy_version = "msrs-v1"
+    root_one.job_id = uuid.uuid4()
+
+    root_two = MagicMock()
+    root_two.id = root_two_id
+    root_two.parent_id = None
+    root_two.original_filename = "embedded.docm"
+    root_two.sha256 = "root-two"
+    root_two.mime = "application/msword"
+    root_two.size = 20
+    root_two.depth = 0
+    root_two.origin_path = None
+    root_two.extraction_source = "document-analysis"
+    root_two.archive_type = None
+    root_two.extraction_note = None
+    root_two.verdict = "suspicious"
+    root_two.score = 50
+    root_two.risk_level = "medium"
+    root_two.policy_version = "msrs-v1"
+    root_two.job_id = uuid.uuid4()
+
+    child = MagicMock()
+    child.id = child_id
+    child.parent_id = root_one_id
+    child.original_filename = "payload.exe"
+    child.sha256 = "child"
+    child.mime = "application/octet-stream"
+    child.size = 30
+    child.depth = 1
+    child.origin_path = "payload.exe"
+    child.extraction_source = "archive-extract"
+    child.archive_type = None
+    child.extraction_note = None
+    child.verdict = "malicious"
+    child.score = 95
+    child.risk_level = "malicious"
+    child.policy_version = "msrs-v1"
+    child.job_id = uuid.uuid4()
+
+    db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [root_one, root_two, child]
+    db.execute.return_value = mock_result
+
+    tree = await _build_artifact_tree(str(uuid.uuid4()), db)
+
+    assert tree is not None
+    assert tree["id"] == str(root_one_id)
+    assert [node["id"] for node in tree["children"]] == [str(child_id), str(root_two_id)]
 
 
 def test_get_report_not_completed(client: TestClient, mock_db_session: AsyncMock):

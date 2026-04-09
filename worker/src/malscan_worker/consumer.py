@@ -17,6 +17,7 @@ from tenacity import (
 from malscan_worker.config import get_settings
 from malscan_worker.db import (
     increment_password_attempts,
+    update_artifact_risk,
     update_job_result_strict,
     update_job_status,
 )
@@ -133,6 +134,23 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
                 elif job_id and attempts >= 3:
                     report_payload = build_password_attempts_exhausted_report(body)
                     await update_job_result_strict(job_id, report_payload)
+                    artifact_id = body.get("artifact_id")
+                    risk = report_payload.get("risk") or {}
+                    if artifact_id:
+                        try:
+                            await update_artifact_risk(
+                                artifact_id=artifact_id,
+                                verdict=report_payload.get("verdict", "unknown"),
+                                score=int(report_payload.get("score", 0) or 0),
+                                risk_level=str(report_payload.get("risk_level") or "clean"),
+                                policy_version=str(risk.get("policy_version") or "unknown"),
+                            )
+                        except Exception:
+                            log.exception(
+                                "failed_to_update_artifact_risk_exhausted_password",
+                                artifact_id=artifact_id,
+                                job_id=job_id,
+                            )
                     await update_job_status(job_id, "done")
 
                 await message.ack()

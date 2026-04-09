@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from typing import Any
 
+from malscan.scoring.policy import POLICY_VERSION
+
 
 def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[str, Any]:
     """Build final report payload when archive password attempts are exhausted."""
@@ -17,6 +19,26 @@ def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[s
         },
         "verdict": "unknown",
         "score": 0,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": POLICY_VERSION,
+            "risk_score": 0,
+            "risk_level": "clean",
+            "legacy_verdict": "unknown",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 0,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 0,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
         "results": {
             "av_result": {
                 "engine": "ClamAV",

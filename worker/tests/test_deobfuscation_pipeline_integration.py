@@ -110,9 +110,71 @@ def test_deobfuscation_report_section_exists() -> None:
     assert report["results"]["deobfuscation"] == deob_findings
 
 
-def test_deobfuscation_score_boost_is_additive_caps_at_25_and_flips_clean_to_suspicious() -> None:
-    # Clean baseline becomes suspicious with small deobfuscation IOC boost.
-    clean_report = _build_report(
+def test_pure_deobfuscation_with_raw_ioc_stays_low_risk() -> None:
+    report = _build_report(
+        [
+            _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
+            _stage_result("clamav", {"infected": False, "threat_name": None}),
+            _stage_result("yara", {"matches": []}),
+            _stage_result(
+                "ioc-extract",
+                {"urls": ["http://a.test"], "domains": [], "ip_addresses": []},
+            ),
+            _stage_result(
+                "deobfuscation",
+                {
+                    "techniques_found": ["base64"],
+                    "decoded_strings_preview": ["powershell -nop -w hidden -enc AAAA"],
+                    "extracted_iocs": {
+                        "urls": ["http://a.test"],
+                        "domains": [],
+                        "ips": [],
+                    },
+                },
+            ),
+        ]
+    )
+
+    assert report["score"] == 19
+    assert report["risk_level"] == "low"
+    assert report["verdict"] == "suspicious"
+
+
+def test_deobfuscation_plus_confirmed_yara_is_malicious() -> None:
+    report = _build_report(
+        [
+            _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
+            _stage_result("clamav", {"infected": False, "threat_name": None}),
+            _stage_result(
+                "yara",
+                {
+                    "matches": [
+                        {
+                            "rule": "malware_family_rule",
+                            "classification": "malicious_family",
+                            "confidence": "high",
+                            "severity": "high",
+                        }
+                    ]
+                },
+            ),
+            _stage_result("ioc-extract", {"urls": [], "domains": [], "ip_addresses": []}),
+            _stage_result(
+                "deobfuscation",
+                {
+                    "decoded_strings_preview": ["powershell -nop -w hidden -enc AAAA"],
+                },
+            ),
+        ]
+    )
+
+    assert report["score"] == 100
+    assert report["risk_level"] == "malicious"
+    assert report["verdict"] == "malicious"
+
+
+def test_no_deobfuscation_evidence_remains_clean() -> None:
+    report = _build_report(
         [
             _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
             _stage_result("clamav", {"infected": False, "threat_name": None}),
@@ -120,44 +182,17 @@ def test_deobfuscation_score_boost_is_additive_caps_at_25_and_flips_clean_to_sus
             _stage_result("ioc-extract", {"urls": [], "domains": [], "ip_addresses": []}),
             _stage_result(
                 "deobfuscation",
-                {
-                    "extracted_iocs": {
-                        "urls": ["http://a.test"],
-                        "domains": ["a.test"],
-                        "ips": ["8.8.8.8"],
-                    }
-                },
+                {"extracted_iocs": {"urls": [], "domains": [], "ips": []}},
             ),
         ]
     )
-    assert clean_report["score"] == 3
-    assert clean_report["verdict"] == "suspicious"
 
-    # Existing suspicious score gets additive deobfuscation boost, capped at +25.
-    suspicious_report = _build_report(
-        [
-            _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
-            _stage_result("clamav", {"infected": False, "threat_name": None}),
-            _stage_result("yara", {"matches": ["rule1"]}),
-            _stage_result("ioc-extract", {"urls": [], "domains": [], "ip_addresses": []}),
-            _stage_result(
-                "deobfuscation",
-                {
-                    "extracted_iocs": {
-                        "urls": [f"http://u{i}.test" for i in range(20)],
-                        "domains": [f"d{i}.test" for i in range(20)],
-                        "ips": [f"10.0.0.{i}" for i in range(1, 21)],
-                    }
-                },
-            ),
-        ]
-    )
-    # YARA one match => 60, deob boost => +25 (cap), total 85.
-    assert suspicious_report["score"] == 85
-    assert suspicious_report["verdict"] == "suspicious"
+    assert report["score"] == 0
+    assert report["risk_level"] == "clean"
+    assert report["verdict"] == "clean"
 
 
-def test_deobfuscation_score_boost_counts_unique_iocs_only() -> None:
+def test_deobfuscation_decoded_iocs_are_reported_without_affecting_local_score() -> None:
     report = _build_report(
         [
             _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
@@ -181,9 +216,9 @@ def test_deobfuscation_score_boost_counts_unique_iocs_only() -> None:
         ]
     )
 
-    # Unique deob IOCs are 2 URLs + 1 domain + 1 IP => boost 4.
-    assert report["score"] == 4
-    assert report["verdict"] == "suspicious"
+    assert report["score"] == 0
+    assert report["risk_level"] == "clean"
+    assert report["verdict"] == "clean"
 
 
 def test_none_ioc_fields_are_treated_as_empty_lists() -> None:
@@ -221,6 +256,30 @@ def test_none_ioc_fields_are_treated_as_empty_lists() -> None:
     assert report["results"]["iocs"]["ips"] == []
 
 
+def test_ip_addresses_alias_contributes_to_local_score_when_ips_is_none() -> None:
+    report = _build_report(
+        [
+            _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
+            _stage_result("clamav", {"infected": False, "threat_name": None}),
+            _stage_result("yara", {"matches": []}),
+            _stage_result(
+                "ioc-extract",
+                {
+                    "urls": [],
+                    "domains": [],
+                    "ips": None,
+                    "ip_addresses": ["1.1.1.1", "2.2.2.2", "3.3.3.3"],
+                },
+            ),
+        ]
+    )
+
+    assert report["results"]["iocs"]["ips"] == ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
+    assert report["score"] == 12
+    assert report["risk_level"] == "low"
+    assert report["verdict"] == "suspicious"
+
+
 def test_mixed_ips_and_ip_addresses_fields_are_merged_correctly() -> None:
     report = _build_report(
         [
@@ -249,9 +308,6 @@ def test_mixed_ips_and_ip_addresses_fields_are_merged_correctly() -> None:
     )
 
     assert report["results"]["iocs"]["ips"] == ["1.1.1.1", "2.2.2.2", "3.3.3.3"]
-    # Deob score boost is based on unique deob IP values only.
-    assert report["score"] == 2
-    assert report["verdict"] == "suspicious"
 
 
 @pytest.mark.asyncio

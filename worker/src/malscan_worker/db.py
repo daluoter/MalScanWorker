@@ -264,6 +264,8 @@ async def create_artifact(
     mime: str | None = None,
     verdict: str | None = None,
     score: int | None = None,
+    risk_level: str | None = None,
+    policy_version: str | None = None,
 ) -> dict[str, Any]:
     """Create an artifact record. Returns dict with 'id' key.
 
@@ -283,12 +285,13 @@ async def create_artifact(
                     id, parent_id, root_id, depth,
                     sha256, md5, sha1, size, mime, original_filename,
                     origin_path, extraction_source, archive_type, extraction_note,
-                    job_id, root_job_id, verdict, score, created_at
+                    job_id, root_job_id, verdict, score, risk_level, policy_version, created_at
                 ) VALUES (
                     :id, :parent_id, :root_id, :depth,
                     :sha256, :md5, :sha1, :size, :mime, :original_filename,
                     :origin_path, :extraction_source, :archive_type, :extraction_note,
-                    :job_id, :root_job_id, :verdict, :score, :created_at
+                    :job_id, :root_job_id, :verdict, :score,
+                    :risk_level, :policy_version, :created_at
                 )
                 """
             )
@@ -313,6 +316,8 @@ async def create_artifact(
                     "root_job_id": _UUID(root_job_id) if root_job_id else None,
                     "verdict": verdict,
                     "score": score,
+                    "risk_level": risk_level,
+                    "policy_version": policy_version,
                     "created_at": datetime.now(timezone.utc),
                 },
             )
@@ -323,21 +328,73 @@ async def create_artifact(
             raise
 
 
-async def update_artifact_verdict(
+async def update_artifact_risk(
     artifact_id: str,
     verdict: str,
     score: int,
+    risk_level: str,
+    policy_version: str,
 ) -> None:
-    """Update the denormalized verdict/score on an artifact record."""
+    """Update the denormalized risk metadata on an artifact record."""
     from uuid import UUID as _UUID
 
     from sqlalchemy import text
 
     async with AsyncSession(_engine) as session:
         try:
-            stmt = text("UPDATE artifacts SET verdict = :verdict, score = :score WHERE id = :id")
+            stmt = text(
+                """
+                UPDATE artifacts
+                SET verdict = :verdict,
+                    score = :score,
+                    risk_level = :risk_level,
+                    policy_version = :policy_version
+                WHERE id = :id
+                """
+            )
             await session.execute(
-                stmt, {"id": _UUID(artifact_id), "verdict": verdict, "score": score}
+                stmt,
+                {
+                    "id": _UUID(artifact_id),
+                    "verdict": verdict,
+                    "score": score,
+                    "risk_level": risk_level,
+                    "policy_version": policy_version,
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def update_artifact_verdict(
+    artifact_id: str,
+    verdict: str,
+    score: int,
+) -> None:
+    """Compatibility shim until pipeline callers send risk metadata."""
+    from uuid import UUID as _UUID
+
+    from sqlalchemy import text
+
+    async with AsyncSession(_engine) as session:
+        try:
+            stmt = text(
+                """
+                UPDATE artifacts
+                SET verdict = :verdict,
+                    score = :score
+                WHERE id = :id
+                """
+            )
+            await session.execute(
+                stmt,
+                {
+                    "id": _UUID(artifact_id),
+                    "verdict": verdict,
+                    "score": score,
+                },
             )
             await session.commit()
         except Exception:

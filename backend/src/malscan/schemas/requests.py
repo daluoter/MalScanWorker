@@ -1,7 +1,7 @@
 """Pydantic schemas for API requests and responses."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,9 @@ class YaraHit(BaseModel):
     rule: str
     namespace: str
     description: str = ""
+    classification: str = "generic"
+    confidence: str = "medium"
+    family: str = ""
     severity: str = "medium"
     author: str = ""
     tags: list[str]
@@ -128,6 +131,46 @@ class SandboxResult(BaseModel):
     is_mock: bool
 
 
+class RiskEvidence(BaseModel):
+    """Single normalized risk evidence entry."""
+
+    source: str
+    kind: str
+    tier: str
+    severity: str
+    points: int
+    scope: str
+    depth: int
+    reason: str
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class RiskBreakdown(BaseModel):
+    """Risk score component breakdown."""
+
+    local_score: int
+    inherited_score: int
+    synergy_bonus: int
+    dampener: int
+    final_score: int
+
+
+class RiskSummary(BaseModel):
+    """Top-level risk summary block."""
+
+    policy_version: str
+    risk_score: int
+    risk_level: str
+    legacy_verdict: str
+    malicious_gate_open: bool
+    high_gate_open: bool
+    independent_source_count: int
+    breakdown: RiskBreakdown
+    evidence: list[RiskEvidence] = Field(default_factory=list)
+    top_evidence: list[RiskEvidence] = Field(default_factory=list)
+    descendant_summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class AnalysisResults(BaseModel):
     """All analysis results."""
 
@@ -135,6 +178,9 @@ class AnalysisResults(BaseModel):
     yara_hits: list[YaraHit]
     iocs: Iocs
     sandbox: SandboxResult
+    format_analysis: dict[str, Any] | None = None
+    deobfuscation: dict[str, Any] | None = None
+    document_analysis: dict[str, Any] | None = None
     archive_extract: ArchiveExtractResult | None = None
 
 
@@ -178,8 +224,10 @@ class ArtifactTreeNode(BaseModel):
     extraction_note: str | None = None
     verdict: str | None = None
     score: int | None = None
+    risk_level: str | None = None
+    policy_version: str | None = None
     job_id: str | None = None
-    children: list["ArtifactTreeNode"] = []
+    children: list["ArtifactTreeNode"] = Field(default_factory=list)
 
 
 class ReportResponse(BaseModel):
@@ -190,10 +238,12 @@ class ReportResponse(BaseModel):
     file: FileMetadata
     verdict: str
     score: int
+    risk_level: str
+    risk: RiskSummary
     results: AnalysisResults
     timings: Timings
     created_at: datetime
-    child_jobs: list[ChildJobSummary] = []
+    child_jobs: list[ChildJobSummary] = Field(default_factory=list)
     artifact_tree: ArtifactTreeNode | None = None
 
 

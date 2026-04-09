@@ -61,6 +61,8 @@ class Artifact(Base):
     # Denormalized result
     verdict: Mapped[str | None] = mapped_column(String(20), nullable=True)
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    risk_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    policy_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -154,7 +154,11 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
     from malscan_worker.pipeline import _build_analysis_result
 
     now = datetime.now(timezone.utc)
-    ctx = type("Ctx", (), {"sha256": "abc123", "original_filename": "sample.bin"})()
+    ctx = type(
+        "Ctx",
+        (),
+        {"sha256": "abc123", "original_filename": "sample.bin", "artifact_id": "artifact-1"},
+    )()
     results = [
         StageResult(
             stage_name="file-type",
@@ -204,8 +208,10 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
     report = _build_analysis_result("job-1", "file-1", ctx, results, 123)
 
     assert report["verdict"] == "suspicious"
-    assert report["score"] >= 60
-    assert report["score"] >= 37
+    assert report["risk_level"] == "medium"
+    assert report["score"] == 59
+    assert report["risk"]["policy_version"] == "msrs-v1"
+    assert report["risk"]["breakdown"]["local_score"] >= 0
 
     format_report = report["results"]["format_analysis"]
     assert format_report["analyzer"] == "pe"

@@ -119,6 +119,7 @@ class FormatAnalysisStage(Stage):
 
         root_artifact_id = ctx.root_artifact_id
         parent_artifact_id = ctx.artifact_id
+        root_job_id = ctx.root_job_id or ctx.job_id
         parent_job_id = str(ctx.job.id)
         parent_job_depth = ctx.job.depth
         ancestor_hashes = ctx.ancestor_hashes or set()
@@ -138,11 +139,13 @@ class FormatAnalysisStage(Stage):
                 original_filename=ctx.original_filename,
                 extraction_source="format-analysis",
                 archive_type=analyzer_name,
-                root_job_id=ctx.job_id,
+                root_job_id=root_job_id,
                 job_id=ctx.job_id,
             )
             root_artifact_id = root_art["id"]
             parent_artifact_id = root_artifact_id
+            ctx.root_artifact_id = root_artifact_id
+            ctx.artifact_id = root_artifact_id
 
         submitter: InternalJobSubmitter | None = None
 
@@ -180,7 +183,7 @@ class FormatAnalysisStage(Stage):
                 origin_path=source,
                 extraction_source="format-analysis",
                 archive_type=analyzer_name,
-                root_job_id=ctx.job_id,
+                root_job_id=root_job_id,
                 verdict="skipped" if duplicate else None,
                 extraction_note="duplicate_within_extraction" if duplicate else None,
             )
@@ -203,6 +206,7 @@ class FormatAnalysisStage(Stage):
                     parent_job_depth=parent_job_depth,
                     artifact_id=record["id"],
                     root_artifact_id=root_artifact_id,
+                    root_job_id=root_job_id,
                     ancestor_hashes=ancestor_hashes | {ctx.sha256},
                 )
                 if sub_job_id:

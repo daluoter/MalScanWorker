@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import structlog
+from malscan.scoring.adapters import build_direct_evidence
+from malscan.scoring.engine import score_direct_evidence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from malscan_worker.config import get_settings
@@ -105,22 +107,12 @@ def _build_analysis_result(
     # Extract key findings from stage results
     stage_findings = {r.stage_name: r.findings for r in results}
 
-    # Determine verdict based on findings
-    verdict = "clean"
-    score = 0
-
     # Check ClamAV result
     clamav = stage_findings.get("clamav", {})
-    if clamav.get("infected"):
-        verdict = "malicious"
-        score = max(score, 90)
 
     # Check YARA result
     yara = stage_findings.get("yara", {})
     yara_matches = yara.get("matches", [])
-    if yara_matches:
-        verdict = "suspicious" if verdict == "clean" else verdict
-        score = max(score, 50 + len(yara_matches) * 10)
 
     # ------------------------------------------------------------------
     # Document analysis scoring
@@ -131,91 +123,9 @@ def _build_analysis_result(
     embedded_objects = doc.get("embedded_objects", [])
     suspicious_keywords = doc.get("suspicious_keywords", [])
 
-    # Exploit indicators — each one adds significant risk
-    if exploit_indicators:
-        # Any Equation Editor or CVE indicator → very high risk
-        has_equation = any(
-            "equation_editor" in ind.get("type", "") or ind.get("cves")
-            for ind in exploit_indicators
-        )
-        has_external_template = any(
-            ind.get("type") in ("external_template", "external_relationship")
-            for ind in exploit_indicators
-        )
-        has_dde = any(ind.get("type") == "dde_field" for ind in exploit_indicators)
-        has_dangerous_class = any(
-            ind.get("type") == "dangerous_ole_class" for ind in exploit_indicators
-        )
-
-        if has_equation:
-            verdict = "malicious"
-            score = max(score, 85)
-        if has_external_template:
-            # External template injection is a strong exploit signal
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 70)
-        if has_dde:
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 60)
-        if has_dangerous_class:
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 55)
-
-        # General: each exploit indicator beyond the first adds 5 pts
-        extra = max(0, len(exploit_indicators) - 1) * 5
-        score = max(score, 50 + extra)
-        if verdict == "clean":
-            verdict = "suspicious"
-
-    # Macros with auto-exec + suspicious keywords → elevated risk
-    if macros.get("found"):
-        if macros.get("auto_exec") and macros.get("suspicious"):
-            # Auto-executing macros with suspicious API calls
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 65 + min(len(suspicious_keywords), 10) * 2)
-        elif macros.get("auto_exec"):
-            # Auto-exec but no obviously suspicious keywords
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 45)
-        elif macros.get("suspicious"):
-            # Suspicious keywords but no auto-exec
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 40)
-        else:
-            # Macros exist but seem benign
-            score = max(score, 15)
-
-    # Embedded objects count — more objects = higher suspicion
-    if len(embedded_objects) > 3:
-        score = max(score, 30 + len(embedded_objects) * 2)
-        if verdict == "clean":
-            verdict = "suspicious"
-
-    # ------------------------------------------------------------------
-    # Format analysis scoring
-    # ------------------------------------------------------------------
     fmt = stage_findings.get("format-analysis", {})
     fmt_risk_score = int(fmt.get("risk_score", 0) or 0)
     fmt_indicators = fmt.get("indicators", [])
-    for indicator in fmt_indicators:
-        severity = str(indicator.get("severity", "")).lower()
-        if severity == "critical":
-            verdict = "malicious"
-            score = max(score, 85)
-        elif severity == "high":
-            if verdict == "clean":
-                verdict = "suspicious"
-            score = max(score, 60)
-        elif severity == "medium":
-            if verdict == "clean":
-                verdict = "suspicious"
-    score = max(score, fmt_risk_score)
 
     # Build file info
     filetype = stage_findings.get("file-type", {})
@@ -261,15 +171,6 @@ def _build_analysis_result(
         },
     }
 
-    deob_boost = min(
-        25,
-        len(set(deob_urls)) + len(set(deob_domains)) + len(set(deob_ips)),
-    )
-    if deob_boost > 0:
-        score += deob_boost
-        if verdict == "clean":
-            verdict = "suspicious"
-
     # Build document analysis summary for report
     doc_analysis: dict[str, Any] = {}
     if doc:
@@ -308,11 +209,71 @@ def _build_analysis_result(
         ],
     }
 
+    scorer_stage_findings = dict(stage_findings)
+    if isinstance(scorer_stage_findings.get("ioc-extract"), dict):
+        scorer_ioc = dict(scorer_stage_findings["ioc-extract"])
+        for key in ("urls", "domains", "ips", "ip_addresses"):
+            if scorer_ioc.get(key) is None:
+                scorer_ioc[key] = []
+        scorer_stage_findings["ioc-extract"] = scorer_ioc
+    if isinstance(scorer_stage_findings.get("deobfuscation"), dict):
+        scorer_deob = dict(scorer_stage_findings["deobfuscation"])
+        extracted_iocs = scorer_deob.get("extracted_iocs")
+        if isinstance(extracted_iocs, dict):
+            scorer_deob_iocs = dict(extracted_iocs)
+            for key in ("urls", "domains", "ips", "ip_addresses"):
+                if scorer_deob_iocs.get(key) is None:
+                    scorer_deob_iocs[key] = []
+            scorer_deob["extracted_iocs"] = scorer_deob_iocs
+        scorer_stage_findings["deobfuscation"] = scorer_deob
+
+    artifact_id = getattr(ctx, "artifact_id", None)
+    direct_evidence = build_direct_evidence(
+        artifact_id=artifact_id,
+        stage_findings=scorer_stage_findings,
+    )
+    decision = score_direct_evidence(direct_evidence=direct_evidence)
+
+    def _serialize_evidence_entry(entry: Any) -> dict[str, Any]:
+        return {
+            "source": entry.source,
+            "kind": entry.kind,
+            "tier": entry.tier,
+            "severity": entry.severity,
+            "points": entry.points,
+            "scope": entry.scope,
+            "depth": entry.depth,
+            "reason": entry.reason,
+            "raw": dict(entry.raw),
+        }
+
+    risk = {
+        "policy_version": decision.policy_version,
+        "risk_score": decision.risk_score,
+        "risk_level": decision.risk_level,
+        "legacy_verdict": decision.legacy_verdict,
+        "malicious_gate_open": decision.breakdown.malicious_gate_open,
+        "high_gate_open": decision.breakdown.high_gate_open,
+        "independent_source_count": decision.breakdown.independent_source_count,
+        "breakdown": {
+            "local_score": decision.breakdown.local_score,
+            "inherited_score": decision.breakdown.inherited_score,
+            "synergy_bonus": decision.breakdown.synergy_bonus,
+            "dampener": decision.breakdown.dampener,
+            "final_score": decision.breakdown.final_score,
+        },
+        "evidence": [_serialize_evidence_entry(entry) for entry in decision.evidence],
+        "top_evidence": [_serialize_evidence_entry(entry) for entry in decision.top_evidence],
+        "descendant_summary": {},
+    }
+
     return {
         "job_id": job_id,
         "file": file_info,
-        "verdict": verdict,
-        "score": min(score, 100),
+        "verdict": decision.legacy_verdict,
+        "score": decision.risk_score,
+        "risk_level": decision.risk_level,
+        "risk": risk,
         "results": {
             "av_result": {
                 "engine": "ClamAV",
@@ -450,6 +411,7 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
                 db=session,
                 artifact_id=job_data.get("artifact_id"),
                 root_artifact_id=job_data.get("root_artifact_id"),
+                root_job_id=job_data.get("root_job_id") or job_id,
                 ancestor_hashes=set(job_data.get("ancestor_hashes", [])),
             )
 
@@ -512,17 +474,17 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
         # Update artifact verdict if this job is linked to an artifact
         if job_data.get("artifact_id"):
             try:
-                from malscan_worker.db import update_artifact_verdict
+                from malscan_worker.db import update_artifact_risk
 
-                await update_artifact_verdict(
+                await update_artifact_risk(
                     artifact_id=job_data["artifact_id"],
                     verdict=analysis_result["verdict"],
                     score=analysis_result["score"],
+                    risk_level=analysis_result["risk_level"],
+                    policy_version=analysis_result["risk"]["policy_version"],
                 )
             except Exception:
-                log.exception(
-                    "failed_to_update_artifact_verdict", artifact_id=job_data["artifact_id"]
-                )
+                log.exception("failed_to_update_artifact_risk", artifact_id=job_data["artifact_id"])
 
         # Determine final status
         # If we reached here, the job is technically "done",
