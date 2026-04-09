@@ -11,11 +11,25 @@ Current pipeline flow:
    - `clamav` - ClamAV scanning
    - `yara` - YARA rule matching
    - `ioc-extract` - regex IOC extraction
+   - `deobfuscation` - decode and normalize obfuscated strings to recover hidden IOCs
 2. **Format-specific stage**
    - `format-analysis` - dispatch to a format analyzer via `AnalyzerRegistry`
 3. **Sequential stages**
    - `archive-extract` - recursive extraction + sub-job creation
+   - `document-analysis` - document parsing and artifact extraction
    - `sandbox` - sandbox analysis (mock in MVP)
+
+## Stages
+
+1. **file-type** - File type detection using python-magic
+2. **clamav** - ClamAV scanning using clamscan CLI
+3. **yara** - YARA rule matching using yara CLI
+4. **ioc-extract** - IOC extraction using regex patterns
+5. **deobfuscation** - Decoding and normalization of obfuscated content to recover IOCs
+6. **format-analysis** - AnalyzerRegistry dispatch and unified format risk scoring
+7. **archive-extract** - Archive extraction and recursive artifact scheduling
+8. **document-analysis** - Document parsing and artifact extraction
+9. **sandbox** - Sandbox analysis (mock in MVP)
 
 ## Format-Specific Analyzer Layer (Phase 1)
 
@@ -60,6 +74,7 @@ This allows incremental migration without breaking existing Office internals.
 - Pipeline scoring now includes `format-analysis` indicator severity and analyzer risk score.
 - Reports now include `results.format_analysis`.
 - `results.document_analysis` remains in output for backward compatibility.
+- Deobfuscation output is merged into IOC/report results via `results.deobfuscation`.
 - Format analyzers can submit extracted artifacts as sub-jobs through stage-level handling.
 - Artifact submission now enforces recursive depth limits (same guard style as other recursive stages).
 
