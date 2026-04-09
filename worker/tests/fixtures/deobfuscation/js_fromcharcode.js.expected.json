@@ -1,0 +1,29 @@
+{
+  "truth": {
+    "urls": [
+      "http://js-evil.test/payload"
+    ],
+    "domains": [
+      "js-evil.test"
+    ],
+    "ips": []
+  },
+  "expected_raw": {
+    "urls": [],
+    "domains": [
+      "string.fromcharcode"
+    ],
+    "ips": []
+  },
+  "expected_combined": {
+    "urls": [
+      "http://js-evil.test/payload"
+    ],
+    "domains": [
+      "string.fromcharcode",
+      "js-evil.test"
+    ],
+    "ips": []
+  },
+  "expect_improvement": true
+}

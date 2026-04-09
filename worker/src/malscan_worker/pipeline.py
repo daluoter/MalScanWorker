@@ -22,6 +22,8 @@ from malscan_worker.metrics import stage_latency
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
+from malscan_worker.stages.deobfuscation import DeobfuscationStage
+from malscan_worker.stages.document_analysis import DocumentAnalysisStage
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.format_analysis import FormatAnalysisStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
@@ -48,6 +50,7 @@ PARALLEL_STAGES = [
     ClamAVStage(),
     YaraStage(),  # type: ignore[no-untyped-call]
     IocExtractStage(),
+    DeobfuscationStage(),
 ]
 
 FORMAT_ANALYSIS_STAGE = FormatAnalysisStage()
@@ -58,6 +61,7 @@ FORMAT_ANALYSIS_STAGE = FormatAnalysisStage()
 # DocumentAnalysisStage also creates sub-jobs for extracted artifacts.
 SEQUENTIAL_STAGES = [
     ArchiveExtractStage(),
+    DocumentAnalysisStage(),
     SandboxStage(),
 ]
 
@@ -81,6 +85,23 @@ def _build_analysis_result(
     total_ms: int,
 ) -> dict[str, Any]:
     """Build complete analysis result for storage."""
+
+    def _normalize_ioc_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, str)]
+        return []
+
+    def _merge_unique(primary: list[str], secondary: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for value in primary + secondary:
+            if value and value not in seen:
+                seen.add(value)
+                merged.append(value)
+        return merged
+
     # Extract key findings from stage results
     stage_findings = {r.stage_name: r.findings for r in results}
 
@@ -208,16 +229,46 @@ def _build_analysis_result(
 
     # Build IOC info
     ioc_findings = stage_findings.get("ioc-extract", {})
+    deobfuscation = stage_findings.get("deobfuscation", {})
+    deob_iocs = deobfuscation.get("extracted_iocs", {}) if isinstance(deobfuscation, dict) else {}
+
+    raw_urls = _normalize_ioc_list(ioc_findings.get("urls"))
+    raw_domains = _normalize_ioc_list(ioc_findings.get("domains"))
+    raw_ips = _merge_unique(
+        _normalize_ioc_list(ioc_findings.get("ip_addresses")),
+        _normalize_ioc_list(ioc_findings.get("ips")),
+    )
+
+    deob_urls = _normalize_ioc_list(deob_iocs.get("urls"))
+    deob_domains = _normalize_ioc_list(deob_iocs.get("domains"))
+    deob_ips = _merge_unique(
+        _normalize_ioc_list(deob_iocs.get("ips")),
+        _normalize_ioc_list(deob_iocs.get("ip_addresses")),
+    )
+
+    merged_urls = _merge_unique(raw_urls, deob_urls)
+    merged_domains = _merge_unique(raw_domains, deob_domains)
+    merged_ips = _merge_unique(raw_ips, deob_ips)
+
     iocs = {
-        "urls": ioc_findings.get("urls", []),
-        "domains": ioc_findings.get("domains", []),
-        "ips": ioc_findings.get("ip_addresses", []),
+        "urls": merged_urls,
+        "domains": merged_domains,
+        "ips": merged_ips,
         "hashes": {
             "md5": ioc_findings.get("md5", ""),
             "sha1": ioc_findings.get("sha1", ""),
             "sha256": ctx.sha256,
         },
     }
+
+    deob_boost = min(
+        25,
+        len(set(deob_urls)) + len(set(deob_domains)) + len(set(deob_ips)),
+    )
+    if deob_boost > 0:
+        score += deob_boost
+        if verdict == "clean":
+            verdict = "suspicious"
 
     # Build document analysis summary for report
     doc_analysis: dict[str, Any] = {}
@@ -278,6 +329,7 @@ def _build_analysis_result(
                 "indicators": fmt_indicators,
                 "features": fmt.get("features", {}),
             },
+            "deobfuscation": deobfuscation,
             "document_analysis": doc_analysis,
             "sandbox": stage_findings.get("sandbox", {}),
             "archive_extract": stage_findings.get("archive-extract", {}),

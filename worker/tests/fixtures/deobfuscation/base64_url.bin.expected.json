@@ -1,0 +1,26 @@
+{
+  "truth": {
+    "urls": [
+      "http://evil.test/path?c=1"
+    ],
+    "domains": [
+      "evil.test"
+    ],
+    "ips": []
+  },
+  "expected_raw": {
+    "urls": [],
+    "domains": [],
+    "ips": []
+  },
+  "expected_combined": {
+    "urls": [
+      "http://evil.test/path?c=1"
+    ],
+    "domains": [
+      "evil.test"
+    ],
+    "ips": []
+  },
+  "expect_improvement": true
+}

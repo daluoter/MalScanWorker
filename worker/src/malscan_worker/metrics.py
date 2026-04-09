@@ -33,12 +33,29 @@ worker_active_jobs = Gauge(
     "Currently processing jobs",
 )
 
+deobfuscation_candidates_total = Counter(
+    "malscan_deobfuscation_candidates_total",
+    "Total deobfuscation candidates emitted",
+)
+
+deobfuscation_iocs_total = Counter(
+    "malscan_deobfuscation_iocs_total",
+    "Total deobfuscation IOCs extracted",
+    ["ioc_type"],
+)
+
+deobfuscation_truncation_total = Counter(
+    "malscan_deobfuscation_truncation_total",
+    "Total deobfuscation runs with truncation",
+    ["reason"],
+)
+
 
 async def metrics_handler(request: web.Request) -> web.Response:
     """Prometheus metrics endpoint."""
     return web.Response(
         body=generate_latest(),
-        content_type=CONTENT_TYPE_LATEST,
+        headers={"Content-Type": CONTENT_TYPE_LATEST},
     )
 
 

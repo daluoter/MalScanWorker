@@ -1,0 +1,29 @@
+{
+  "truth": {
+    "urls": [
+      "http://ps-evil.test/dropper"
+    ],
+    "domains": [
+      "ps-evil.test"
+    ],
+    "ips": []
+  },
+  "expected_raw": {
+    "urls": [],
+    "domains": [
+      "powershell.exe"
+    ],
+    "ips": []
+  },
+  "expected_combined": {
+    "urls": [
+      "http://ps-evil.test/dropper"
+    ],
+    "domains": [
+      "powershell.exe",
+      "ps-evil.test"
+    ],
+    "ips": []
+  },
+  "expect_improvement": true
+}

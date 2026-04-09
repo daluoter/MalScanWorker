@@ -13,7 +13,7 @@ from malscan_worker.utils.submission import InternalJobSubmitter
 
 # IOC patterns
 URL_PATTERN = re.compile(
-    rb'https?://[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s\x00-\x1f"\'<>]*',
+    rb'https?://[a-zA-Z0-9][-a-zA-Z0-9]*(?:\.[a-zA-Z0-9][-a-zA-Z0-9]*)+[^\s\x00-\x1f"\'<>]*',
     re.IGNORECASE,
 )
 
@@ -26,6 +26,73 @@ IP_PATTERN = re.compile(
     rb"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
     rb"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b"
 )
+
+_COMMON_DOMAINS = {
+    "microsoft.com",
+    "windows.com",
+    "google.com",
+    "example.com",
+    "localhost",
+    "w3.org",
+}
+
+
+def _is_public_ip(ip: str) -> bool:
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    first = int(parts[0])
+    second = int(parts[1])
+    if first == 10:
+        return False
+    if first == 172 and 16 <= second <= 31:
+        return False
+    if first == 192 and second == 168:
+        return False
+    if first == 127:
+        return False
+    if first == 0 or first >= 224:
+        return False
+    return True
+
+
+def extract_raw_iocs(
+    content: bytes,
+    *,
+    max_urls: int = 100,
+    max_domains: int = 100,
+    max_ips: int = 50,
+) -> dict[str, list[str]]:
+    urls = list({match.decode("utf-8", errors="ignore") for match in URL_PATTERN.findall(content)})[
+        :max_urls
+    ]
+
+    url_domains = set()
+    for url in urls:
+        parts = url.split("/")
+        if len(parts) >= 3:
+            url_domains.add(parts[2].lower())
+
+    domains = list(
+        {
+            match.decode("utf-8", errors="ignore").lower()
+            for match in DOMAIN_PATTERN.findall(content)
+            if match.decode("utf-8", errors="ignore").lower() not in url_domains
+        }
+    )[:max_domains]
+    domains = [d for d in domains if d not in _COMMON_DOMAINS]
+    domains = [d for d in domains if len(d) >= 4 and "." in d[1:-1]]
+
+    ips = list({match.decode("utf-8", errors="ignore") for match in IP_PATTERN.findall(content)})[
+        :max_ips
+    ]
+    ips = [ip for ip in ips if _is_public_ip(ip)]
+
+    return {
+        "urls": urls,
+        "domains": domains,
+        "ips": ips,
+    }
 
 
 class IocExtractStage(Stage):
@@ -45,72 +112,10 @@ class IocExtractStage(Stage):
             # Read file content
             content = ctx.file_path.read_bytes()
 
-            # Extract URLs
-            urls = list(
-                {match.decode("utf-8", errors="ignore") for match in URL_PATTERN.findall(content)}
-            )[:100]  # Limit to 100
-
-            # Extract domains (excluding URLs)
-            url_domains = set()
-            for url in urls:
-                try:
-                    # Extract domain from URL
-                    parts = url.split("/")
-                    if len(parts) >= 3:
-                        url_domains.add(parts[2].lower())
-                except Exception:
-                    pass
-
-            domains = list(
-                {
-                    match.decode("utf-8", errors="ignore").lower()
-                    for match in DOMAIN_PATTERN.findall(content)
-                    if match.decode("utf-8", errors="ignore").lower() not in url_domains
-                }
-            )[:100]
-
-            # Filter out common non-malicious domains
-            common_domains = {
-                "microsoft.com",
-                "windows.com",
-                "google.com",
-                "example.com",
-                "localhost",
-                "w3.org",
-            }
-            domains = [d for d in domains if d not in common_domains]
-
-            # Filter out short/invalid domains (likely false positives from binary data)
-            # Valid domains should have at least 4 chars (e.g., "a.io")
-            domains = [d for d in domains if len(d) >= 4 and "." in d[1:-1]]
-
-            # Extract IPs
-            ips = list(
-                {match.decode("utf-8", errors="ignore") for match in IP_PATTERN.findall(content)}
-            )[:50]
-
-            # Filter out private/local IPs
-            def is_public_ip(ip: str) -> bool:
-                parts = ip.split(".")
-                if len(parts) != 4:
-                    return False
-                first = int(parts[0])
-                second = int(parts[1])
-                if first == 10:
-                    return False
-                if first == 172 and 16 <= second <= 31:
-                    return False
-                if first == 192 and second == 168:
-                    return False
-                if first == 127:
-                    return False
-                if first == 0 or first >= 224:
-                    return False
-                return True
-
-            ips = [ip for ip in ips if is_public_ip(ip)]
-
-            ips = [ip for ip in ips if is_public_ip(ip)]
+            extracted_iocs = extract_raw_iocs(content)
+            urls = extracted_iocs["urls"]
+            domains = extracted_iocs["domains"]
+            ips = extracted_iocs["ips"]
 
             # Calculate file hashes
             md5_hash = hashlib.md5(content).hexdigest()

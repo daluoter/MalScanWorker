@@ -25,7 +25,18 @@ class Settings(BaseSettings):
 
     # Stage configuration
     stage_timeout_seconds: int = 300
-    stages_total: int = 5
+    stages_total: int = 8
+
+    # Deobfuscation
+    deobfuscation_enabled: bool = True
+    deobfuscation_max_file_size: int = 10_000_000
+    deobfuscation_min_base64_length: int = 8
+    deobfuscation_xor_min_decoded_length: int = 8
+    deobfuscation_max_candidates: int = 100
+    deobfuscation_per_decoder_limit: int = 25
+    deobfuscation_confidence_threshold: float = 0.5
+    deobfuscation_max_wall_time_seconds: float = 2.0
+    deobfuscation_max_candidate_bytes: int = 4096
 
     # Extraction limits (depth controlled by existing max_job_depth)
     extraction_max_files: int = 100
