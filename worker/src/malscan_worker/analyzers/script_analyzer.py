@@ -14,6 +14,7 @@ from malscan_worker.analyzers.base import (
     FormatAnalyzer,
     JsonValue,
 )
+from malscan_worker.heuristics.script import build_script_heuristics
 
 if TYPE_CHECKING:
     from malscan_worker.stages.base import StageContext
@@ -58,7 +59,7 @@ _SCRIPT_MIME_HINTS = {
 }
 
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
-_BASE64_RE = re.compile(r"\b[A-Za-z0-9+/]{24,}={0,2}\b")
+_BASE64_RE = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])")
 _HEX_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}){16,}\b")
 
 _PS_HINTS = (
@@ -257,6 +258,9 @@ class ScriptAnalyzer(FormatAnalyzer):
         features: dict[str, JsonValue] = {
             "script_type": script_type,
             "line_count": line_count,
+            "max_line_length": max((len(line) for line in lines), default=0),
+            "text_preview": decoded[:1000],
+            "text_for_heuristics": decoded,
             "obfuscation_score": obfuscation_score,
             "encoded_strings": self._as_json_list(encoded_strings),
             "network_indicators": self._as_json_list(network_indicators),
@@ -279,6 +283,7 @@ class ScriptAnalyzer(FormatAnalyzer):
 
         result.features = features
         result.indicators = indicators
+        result.heuristics = build_script_heuristics(features)
         result.risk_score = self._calculate_risk_score(indicators)
         result.risk_factors = [str(item.get("type", "")) for item in indicators]
         result.extracted_strings = encoded_strings
@@ -289,6 +294,9 @@ class ScriptAnalyzer(FormatAnalyzer):
         return {
             "script_type": script_type,
             "line_count": line_count,
+            "max_line_length": 0,
+            "text_preview": "",
+            "text_for_heuristics": "",
             "obfuscation_score": 0,
             "encoded_strings": ScriptAnalyzer._as_json_list([]),
             "network_indicators": ScriptAnalyzer._as_json_list([]),

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Mapping
+from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import structlog
@@ -14,6 +17,7 @@ from malscan_worker.analyzers import get_default_analyzer_registry
 from malscan_worker.analyzers.base import AnalyzerArtifact
 from malscan_worker.config import get_settings
 from malscan_worker.db import create_artifact
+from malscan_worker.heuristics.models import HeuristicHit
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
@@ -79,6 +83,7 @@ class FormatAnalysisStage(Stage):
             "risk_score": analysis.risk_score,
             "risk_factors": analysis.risk_factors,
             "indicators": analysis.indicators,
+            "heuristics": [_serialize_heuristic(item) for item in analysis.heuristics],
             "features": analysis.features,
             "extracted_strings": analysis.extracted_strings[:200],
             "extracted_artifacts_count": len(analysis.extracted_artifacts),
@@ -253,3 +258,17 @@ class FormatAnalysisStage(Stage):
             artifacts=artifacts or [],
             error=error,
         )
+
+
+def _serialize_heuristic(hit: HeuristicHit) -> dict[str, Any]:
+    return {field.name: _to_jsonable(getattr(hit, field.name)) for field in fields(hit)}
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, MappingProxyType | Mapping):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+
+    return value

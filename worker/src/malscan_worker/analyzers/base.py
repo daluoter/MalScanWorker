@@ -1,11 +1,14 @@
 """Base classes for format-specific analyzers."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
+    from malscan_worker.heuristics.models import HeuristicHit
     from malscan_worker.stages.base import StageContext
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -42,6 +45,7 @@ class AnalyzerResult:
     extracted_strings: list[str] = field(default_factory=list)
     risk_score: int = 0
     risk_factors: list[str] = field(default_factory=list)
+    heuristics: list[HeuristicHit] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     extracted_artifacts: list[AnalyzerArtifact] = field(default_factory=list)
 
@@ -61,6 +65,6 @@ class FormatAnalyzer(ABC):
         ...
 
     @abstractmethod
-    async def analyze(self, file_path: Path, ctx: "StageContext") -> AnalyzerResult:
+    async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
         """Run format-specific analysis and return standardized findings."""
         ...

@@ -438,6 +438,13 @@ Instead, it is integrated through an adapter/shim (`OfficeAnalyzerAdapter`):
 - Format analysis can submit extracted artifacts as sub-jobs.
 - Recursive submission in this stage now enforces max-depth guardrails.
 
+### Structured Heuristic Outputs
+
+- `AnalyzerResult` and `results.format_analysis` now preserve a `heuristics` array.
+- Each heuristic exposes `key`, `category`, `scope`, `role`, `severity`, `confidence`, `summary`, `evidence`, and `tags`.
+- The current coverage includes explainable static heuristics for PE, PDF, Office, LNK, and Script inputs.
+- `archive-extract` also emits `archive_summary` and `heuristics`, including executable concentration, password-protection, path-traversal, and deep-nesting archive signals.
+
 ### Intentionally not included yet
 
 - Full internal decomposition/rewrite of `DocumentAnalysisStage` as a native Office analyzer
@@ -470,9 +477,16 @@ The system now uses evidence-driven multi-signal risk scoring instead of the ear
 - YARA metadata-based classification
 - raw IOC extraction
 - structured `format-analysis` indicators
+- structured heuristics from `format-analysis` and `archive-extract`
 - deobfuscation evidence
 - sandbox behaviors
 - descendant inheritance from the artifact tree
+
+### Heuristic Evidence Normalization
+
+- The backend normalizes `heuristics` from `format-analysis` and `archive-extract` into scoring evidence before falling back to legacy indicators or `risk_score` support.
+- Heuristic evidence is capped by family so a single format or signal type cannot dominate the final score by repetition alone.
+- Current cap families include `entropy`, `packer`, `api`, `structure`, `resource`, `script`, `lolbin`, and `archive`.
 
 ### Compatibility Fields
 

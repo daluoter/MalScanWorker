@@ -263,6 +263,173 @@ async def test_analyze_adds_macro_and_embedded_object_indicators(
     assert "macro_auto_exec" in indicator_types
     assert "embedded_executable" in indicator_types
     assert result.risk_score == 16
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "office.macro_autoexec_launcher" in heuristic_map
+    assert heuristic_map["office.macro_autoexec_launcher"].evidence["suspicious_keywords"] == (
+        "Shell",
+        "CreateObject",
+        "WScript.Shell",
+    )
+
+
+@pytest.mark.asyncio
+async def test_macro_autoexec_launcher_heuristic_matches_suspicious_macro_without_keywords(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "macro-suspicious.doc"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ole",
+        "parser_findings": [],
+        "embedded_objects": [],
+        "extracted_artifacts": [],
+        "suspicious_keywords": [],
+        "macros": {
+            "found": True,
+            "auto_exec": True,
+            "suspicious": True,
+            "sources": [{"module": "Module1", "auto_exec": True}],
+        },
+        "errors": [],
+        "exploit_indicators": [],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "office.macro_autoexec_launcher" in heuristic_map
+    assert heuristic_map["office.macro_autoexec_launcher"].evidence["suspicious_keywords"] == ()
+
+
+@pytest.mark.asyncio
+async def test_analyze_adds_external_template_execution_heuristic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "template.docx"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ooxml",
+        "parser_findings": [],
+        "embedded_objects": [],
+        "extracted_artifacts": [],
+        "suspicious_keywords": [],
+        "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
+        "errors": [],
+        "exploit_indicators": [
+            {"type": "external_template", "detail": "remote template"},
+            {"type": "external_relationship", "detail": "remote relationship"},
+        ],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "office.external_template_execution" in heuristic_map
+    assert heuristic_map["office.external_template_execution"].scope == "office"
+
+
+@pytest.mark.asyncio
+async def test_external_relationship_alone_does_not_emit_external_template_execution_heuristic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "relationship-only.docx"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ooxml",
+        "parser_findings": [],
+        "embedded_objects": [],
+        "extracted_artifacts": [],
+        "suspicious_keywords": [],
+        "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
+        "errors": [],
+        "exploit_indicators": [
+            {"type": "external_relationship", "detail": "generic remote relationship"},
+        ],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    heuristic_keys = {heuristic.key for heuristic in result.heuristics}
+    assert "office.external_template_execution" not in heuristic_keys
+
+
+@pytest.mark.asyncio
+async def test_attached_template_parser_finding_enables_external_template_execution_heuristic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "attached-template.docx"
+    file_path.write_bytes(b"stub")
+
+    findings = {
+        "document_type": "ooxml",
+        "parser_findings": [
+            {"type": "attachedTemplate", "value": "https://example.test/template.dotm"},
+            {
+                "type": "ooxml_rel_type",
+                "value": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/attachedTemplate",
+            },
+        ],
+        "embedded_objects": [],
+        "extracted_artifacts": [],
+        "suspicious_keywords": [],
+        "macros": {"found": False, "auto_exec": False, "suspicious": False, "sources": []},
+        "errors": [],
+        "exploit_indicators": [
+            {"type": "external_relationship", "detail": "attached template relationship"},
+        ],
+    }
+
+    async def _fake_execute(self: object, ctx: StageContext) -> StageResult:
+        del self, ctx
+        return _stage_result("ok", findings)
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.office_adapter.DocumentAnalysisStage.execute",
+        _fake_execute,
+    )
+
+    adapter = OfficeAnalyzerAdapter()
+    result = await adapter.analyze(file_path, _ctx(file_path))
+
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "office.external_template_execution" in heuristic_map
 
 
 @pytest.mark.asyncio

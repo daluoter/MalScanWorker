@@ -43,7 +43,20 @@ DEPTH_DECAY = MappingProxyType(
 WEAK_ONLY_CAP = 29
 NO_HIGH_GATE_CAP = 59
 NO_MALICIOUS_GATE_CAP = 84
-RAW_IOC_CAP = 15
+CAP_GROUP_LIMITS = MappingProxyType(
+    {
+        "ioc_raw": 15,
+        "deob": 20,
+        "heuristic_entropy": 12,
+        "heuristic_packer": 18,
+        "heuristic_api": 35,
+        "heuristic_structure": 20,
+        "heuristic_resource": 30,
+        "heuristic_script": 30,
+        "heuristic_lolbin": 25,
+        "heuristic_archive": 25,
+    }
+)
 PURE_DEOB_CAP = 20
 INHERITED_SCORE_CAP = 40
 SYNERGY_CAP = 15

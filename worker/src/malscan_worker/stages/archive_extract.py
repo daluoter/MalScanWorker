@@ -7,8 +7,12 @@ creates artifact records for extracted files, and submits sub-jobs.
 import asyncio
 import hashlib
 import os
+from collections.abc import Mapping
+from dataclasses import fields
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 import structlog
 
@@ -20,6 +24,8 @@ from malscan_worker.extractors import (
     get_default_registry,
 )
 from malscan_worker.extractors.safety import remove_symlinks
+from malscan_worker.heuristics.archive import build_archive_heuristics, build_archive_summary
+from malscan_worker.heuristics.models import HeuristicHit
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 from malscan_worker.utils.submission import InternalJobSubmitter
 
@@ -150,7 +156,7 @@ class ArchiveExtractStage(Stage):
 
         for ef in result.files:
             # Compute SHA256
-            file_sha256 = hashlib.sha256(open(ef.path, "rb").read()).hexdigest()
+            file_sha256 = _file_sha256(ef.path)
 
             # Cycle detection — skip if hash matches an ancestor
             if file_sha256 in ancestor_hashes:
@@ -212,6 +218,13 @@ class ArchiveExtractStage(Stage):
                         error=str(exc),
                     )
 
+        archive_summary = build_archive_summary(
+            files=result.files,
+            warnings=result.warnings,
+            password_protected=result.password_protected,
+        )
+        heuristics = build_archive_heuristics(archive_summary)
+
         # --- Build final result ---------------------------------------------
         ended_at = datetime.now(timezone.utc)
         return StageResult(
@@ -227,6 +240,8 @@ class ArchiveExtractStage(Stage):
                 "artifacts_created": len(created_artifacts),
                 "warnings": result.warnings,
                 "total_extracted_bytes": sum(ef.size for ef in result.files),
+                "archive_summary": archive_summary,
+                "heuristics": [_serialize_heuristic(hit) for hit in heuristics],
             },
             artifacts=created_artifacts,
         )
@@ -287,3 +302,25 @@ class ArchiveExtractStage(Stage):
             },
             artifacts=[],
         )
+
+
+def _serialize_heuristic(hit: HeuristicHit) -> dict[str, Any]:
+    return {field.name: _to_jsonable(getattr(hit, field.name)) for field in fields(hit)}
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, MappingProxyType | Mapping):
+        return {str(key): _to_jsonable(item) for key, item in value.items()}
+
+    if isinstance(value, tuple):
+        return [_to_jsonable(item) for item in value]
+
+    return value
+
+
+def _file_sha256(path: str, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()

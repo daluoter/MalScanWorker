@@ -16,6 +16,7 @@ from malscan_worker.analyzers.base import (
     FormatAnalyzer,
     JsonValue,
 )
+from malscan_worker.heuristics.pe import build_pe_heuristics
 
 if TYPE_CHECKING:
     from malscan_worker.stages.base import StageContext
@@ -28,6 +29,8 @@ _PE_MIME_TYPES = {
 }
 
 _MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
+_SPARSE_IMPORT_DLL_THRESHOLD = 1
+_SPARSE_IMPORT_SYMBOL_THRESHOLD = 9
 
 _SEVERITY_WEIGHTS = {
     "critical": 25,
@@ -194,6 +197,7 @@ class PEAnalyzer(FormatAnalyzer):
             result.indicators = indicators
             result.risk_score = self._calculate_risk_score(indicators)
             result.risk_factors = [str(indicator.get("type", "")) for indicator in indicators]
+            result.heuristics = build_pe_heuristics(result.features)
             return result
         finally:
             close_method = getattr(pe, "close", None)
@@ -459,16 +463,40 @@ class PEAnalyzer(FormatAnalyzer):
             if isinstance(entropy, int | float) and float(entropy) >= 7.2:
                 high_entropy_count += 1
 
-        if high_entropy_count > 0 and len(imports) <= 1:
+        imported_symbol_count = self._count_imported_symbols(imports)
+        imported_dll_count = self._count_imported_dlls(imports)
+        if high_entropy_count > 0 and (
+            imported_dll_count <= _SPARSE_IMPORT_DLL_THRESHOLD
+            or imported_symbol_count <= _SPARSE_IMPORT_SYMBOL_THRESHOLD
+        ):
             clues.append(
                 {
                     "type": "high_entropy_with_sparse_imports",
                     "high_entropy_sections": high_entropy_count,
-                    "imports": len(imports),
+                    "import_dll_count": imported_dll_count,
+                    "import_symbols": imported_symbol_count,
                 }
             )
 
         return clues
+
+    @staticmethod
+    def _count_imported_symbols(imports: list[JsonValue]) -> int:
+        normalized_functions: set[str] = set()
+        for entry in imports:
+            if not isinstance(entry, dict):
+                continue
+            functions = entry.get("functions")
+            if not isinstance(functions, list):
+                continue
+            for function in functions:
+                if isinstance(function, str) and function:
+                    normalized_functions.add(function.lower())
+        return len(normalized_functions)
+
+    @staticmethod
+    def _count_imported_dlls(imports: list[JsonValue]) -> int:
+        return sum(1 for entry in imports if isinstance(entry, dict) and entry.get("functions"))
 
     def _calculate_risk_score(self, indicators: list[AnalyzerIndicator]) -> int:
         score = 0

@@ -4,13 +4,13 @@ from collections import defaultdict
 
 from malscan.scoring.models import EvidenceRecord, RiskDecision, ScoreBreakdown
 from malscan.scoring.policy import (
+    CAP_GROUP_LIMITS,
     LEGACY_VERDICT_MAP,
     LEVEL_THRESHOLDS,
     NO_HIGH_GATE_CAP,
     NO_MALICIOUS_GATE_CAP,
     POLICY_VERSION,
     PURE_DEOB_CAP,
-    RAW_IOC_CAP,
     SYNERGY_CAP,
     WEAK_ONLY_CAP,
 )
@@ -54,11 +54,9 @@ def score_direct_evidence(*, direct_evidence: list[EvidenceRecord]) -> RiskDecis
             medium_sources.add(ev.source)
 
         effective_points = ev.points
-        if ev.cap_group == "ioc_raw":
-            remaining = max(0, RAW_IOC_CAP - cap_totals[ev.cap_group])
-            effective_points = min(effective_points, remaining)
-        elif ev.cap_group == "deob":
-            remaining = max(0, PURE_DEOB_CAP - cap_totals[ev.cap_group])
+        limit = CAP_GROUP_LIMITS.get(ev.cap_group)
+        if limit is not None:
+            remaining = max(0, limit - cap_totals[ev.cap_group])
             effective_points = min(effective_points, remaining)
 
         cap_totals[ev.cap_group] += effective_points
