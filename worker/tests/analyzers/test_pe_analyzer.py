@@ -301,8 +301,9 @@ async def test_high_entropy_indicator_behavior(
 
     indicators = {indicator["type"]: indicator for indicator in result.indicators}
     assert "high_entropy_section" in indicators
+    assert "packer_detected" in indicators
     assert indicators["high_entropy_section"]["severity"] == "medium"
-    assert result.risk_score == 8
+    assert result.risk_score == 16
 
 
 @pytest.mark.asyncio
@@ -354,6 +355,172 @@ async def test_packer_detected_indicator_from_upx_section(
 
     indicator_types = {indicator["type"] for indicator in result.indicators}
     assert "packer_detected" in indicator_types
+    assert {heuristic.key for heuristic in result.heuristics} == {"packer.known_section_name"}
+
+
+@pytest.mark.asyncio
+async def test_pe_analyzer_populates_required_heuristics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "heuristics.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    high_entropy_data = bytes(range(256)) * 4
+    fake_pe = _FakePE(
+        sections=[
+            _FakeSection("UPX0", 7.95, high_entropy_data),
+            _FakeSection(".text", 7.61, high_entropy_data),
+        ],
+        imports=[
+            _FakeImportEntry(
+                b"KERNEL32.dll",
+                [b"CreateRemoteThread", b"VirtualAllocEx", b"WriteProcessMemory"],
+            )
+        ],
+    )
+    fake_pe.get_overlay = lambda: b"X" * 2048
+    fake_pe.get_overlay_data_start_offset = lambda: 1234
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert {heuristic.key for heuristic in result.heuristics} == {
+        "entropy.high_region_cluster",
+        "api.process_injection_cluster",
+        "packer.known_section_name",
+        "packer.sparse_imports_high_entropy",
+        "structure.overlay_anomaly",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pe_analyzer_emits_sparse_imports_heuristic_for_single_import_symbol(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "sparse.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    high_entropy_data = bytes(range(256)) * 4
+    fake_pe = _FakePE(
+        sections=[
+            _FakeSection("UPX0", 7.95, high_entropy_data),
+            _FakeSection(".text", 7.61, high_entropy_data),
+        ],
+        imports=[_FakeImportEntry(b"KERNEL32.dll", [b"Sleep"])],
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert {heuristic.key for heuristic in result.heuristics} == {
+        "entropy.high_region_cluster",
+        "packer.known_section_name",
+        "packer.sparse_imports_high_entropy",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pe_analyzer_emits_sparse_import_packer_clue_for_single_dll_with_few_symbols(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "not-sparse.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    high_entropy_data = bytes(range(256)) * 4
+    fake_pe = _FakePE(
+        sections=[
+            _FakeSection("UPX0", 7.95, high_entropy_data),
+            _FakeSection(".text", 7.61, high_entropy_data),
+        ],
+        imports=[
+            _FakeImportEntry(
+                b"KERNEL32.dll",
+                [b"Sleep", b"GetProcAddress", b"LoadLibraryA", b"VirtualAlloc", b"CreateFileW"],
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    sparse_clues = [
+        clue
+        for clue in result.features["packer_clues"]
+        if isinstance(clue, dict) and clue.get("type") == "high_entropy_with_sparse_imports"
+    ]
+    assert len(sparse_clues) == 1
+    assert sparse_clues[0]["import_symbols"] == 5
+    packer_indicator = next(
+        indicator for indicator in result.indicators if indicator["type"] == "packer_detected"
+    )
+    assert any(
+        isinstance(clue, dict) and clue.get("type") == "high_entropy_with_sparse_imports"
+        for clue in packer_indicator["evidence"]
+    )
+    assert "packer.sparse_imports_high_entropy" in {
+        heuristic.key for heuristic in result.heuristics
+    }
+
+
+@pytest.mark.asyncio
+async def test_pe_analyzer_uses_deduped_normalized_import_symbol_count_for_sparse_clues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "duplicate-imports.exe"
+    _build_magic_pe(file_path, valid_pe=True)
+
+    high_entropy_data = bytes(range(256)) * 4
+    fake_pe = _FakePE(
+        sections=[
+            _FakeSection("UPX0", 7.95, high_entropy_data),
+            _FakeSection(".text", 7.61, high_entropy_data),
+        ],
+        imports=[
+            _FakeImportEntry(
+                b"KERNEL32.dll",
+                [b"Sleep", b"sleep", b"SLEEP", b"Sleep"],
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        "malscan_worker.analyzers.pe_analyzer.pefile.PE",
+        lambda *args, **kwargs: fake_pe,
+    )
+
+    analyzer = PEAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    sparse_clues = [
+        clue
+        for clue in result.features["packer_clues"]
+        if isinstance(clue, dict) and clue.get("type") == "high_entropy_with_sparse_imports"
+    ]
+
+    assert len(sparse_clues) == 1
+    assert sparse_clues[0]["import_symbols"] == 1
+    assert "packer.sparse_imports_high_entropy" in {
+        heuristic.key for heuristic in result.heuristics
+    }
 
 
 @pytest.mark.asyncio

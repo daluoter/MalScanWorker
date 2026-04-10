@@ -288,12 +288,16 @@ def _build_analysis_result(
                 "risk_score": fmt_risk_score,
                 "risk_factors": fmt.get("risk_factors", []),
                 "indicators": fmt_indicators,
+                "heuristics": fmt.get("heuristics", []),
                 "features": fmt.get("features", {}),
             },
             "deobfuscation": deobfuscation,
             "document_analysis": doc_analysis,
             "sandbox": stage_findings.get("sandbox", {}),
-            "archive_extract": stage_findings.get("archive-extract", {}),
+            "archive_extract": {
+                **stage_findings.get("archive-extract", {}),
+                "heuristics": stage_findings.get("archive-extract", {}).get("heuristics", []),
+            },
         },
         "timings": timings,
     }

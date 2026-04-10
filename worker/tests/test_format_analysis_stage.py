@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from malscan_worker.analyzers.base import AnalyzerResult
+from malscan_worker.heuristics.models import make_hit
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.format_analysis import FormatAnalysisStage
 
@@ -651,3 +652,42 @@ async def test_max_depth_guard_skips_artifact_creation_and_subjob_submission(
     assert create_artifact_calls == 0
     assert get_instance_calls == 0
     assert submitter_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_format_stage_preserves_heuristics_in_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Analyzer:
+        name = "script"
+
+        async def analyze(self, file_path: Path, ctx: StageContext) -> AnalyzerResult:
+            del file_path, ctx
+            return AnalyzerResult(
+                analyzer_name="script",
+                format_type="SCRIPT",
+                heuristics=[
+                    make_hit(
+                        key="script.encoded_command_execution",
+                        category="script_token",
+                        scope="script",
+                        role="gate_signal",
+                        severity="high",
+                        confidence=0.9,
+                        summary="Encoded payload and execution primitives appear together",
+                        evidence={"matched": ["powershell", "-enc"]},
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        "malscan_worker.stages.format_analysis.get_default_analyzer_registry",
+        lambda: _FakeRegistry(_Analyzer()),
+    )
+
+    stage = FormatAnalysisStage()
+    result = await stage.execute(_ctx(tmp_path))
+
+    assert result.findings["heuristics"][0]["key"] == "script.encoded_command_execution"
+    assert result.findings["heuristics"][0]["evidence"] == {"matched": ["powershell", "-enc"]}
+    assert isinstance(result.findings["heuristics"][0]["evidence"], dict)

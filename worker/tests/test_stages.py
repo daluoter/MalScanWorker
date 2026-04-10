@@ -3,7 +3,7 @@
 import tarfile
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
@@ -220,3 +220,50 @@ async def test_archive_extract_7z(tmp_path):
     assert result.findings.get("archive_type") == "7z"
     assert result.findings.get("extracted_count") == 1
     assert result.findings.get("sub_jobs_created") == 0
+
+
+@pytest.mark.asyncio
+async def test_archive_extract_uses_streaming_sha256_helper(tmp_path):
+    """ArchiveExtractStage hashes extracted files through the helper instead of read-all."""
+    extracted = tmp_path / "child.bin"
+    extracted.write_bytes(b"abc")
+
+    class _FakeHandler:
+        name = "zip"
+
+        def extract(self, *args, **kwargs):
+            from malscan_worker.extractors.base import ExtractedFile, ExtractionResult
+
+            return ExtractionResult(
+                files=[
+                    ExtractedFile(
+                        path=str(extracted),
+                        original_name="child.bin",
+                        size=3,
+                        origin_path="child.bin",
+                    )
+                ],
+                archive_type="zip",
+            )
+
+    ctx = StageContext(
+        job_id="streaming-sha-job",
+        file_id="file-id",
+        storage_key="key",
+        sha256="root-sha",
+        original_filename="test.zip",
+        file_path=tmp_path / "test.zip",
+    )
+    ctx.file_path.write_bytes(b"PK\x03\x04")
+
+    stage = ArchiveExtractStage()
+    stage._registry._handlers = [_FakeHandler()]
+
+    with patch(
+        "malscan_worker.stages.archive_extract._file_sha256",
+        return_value="f" * 64,
+    ) as mock_hash:
+        result = await stage.execute(ctx)
+
+    assert result.status == "ok"
+    mock_hash.assert_called_once_with(str(extracted))

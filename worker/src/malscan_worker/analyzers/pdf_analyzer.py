@@ -16,6 +16,7 @@ from malscan_worker.analyzers.base import (
     FormatAnalyzer,
     JsonValue,
 )
+from malscan_worker.heuristics.pdf import build_pdf_heuristics
 
 if TYPE_CHECKING:
     from malscan_worker.stages.base import StageContext
@@ -41,6 +42,11 @@ _FILTER_NAME_RE = re.compile(
 _ACTION_JAVASCRIPT_RE = re.compile(rb"/S\s*/JavaScript\b")
 _ACTION_LAUNCH_RE = re.compile(rb"/S\s*/Launch\b")
 _OPEN_ACTION_RE = re.compile(rb"/OpenAction\b")
+_WIN_LAUNCH_TARGET_RE = re.compile(r"/Win\s*<<\s*/F\s*\(([^)]*)\)\s*>>", re.IGNORECASE | re.DOTALL)
+_FILESPEC_LAUNCH_TARGET_RE = re.compile(
+    r"/F\s*<<\s*/F\s*\(([^)]*)\)\s*>>", re.IGNORECASE | re.DOTALL
+)
+_DIRECT_LAUNCH_TARGET_RE = re.compile(r"/F\s*\(([^)]*)\)", re.IGNORECASE | re.DOTALL)
 
 _SUSPICIOUS_URI_PREFIXES = (
     "javascript:",
@@ -52,6 +58,7 @@ _SUSPICIOUS_URI_PREFIXES = (
 _EXECUTABLE_SUFFIXES = (
     ".exe",
     ".dll",
+    ".com",
     ".js",
     ".vbs",
     ".bat",
@@ -117,6 +124,7 @@ class PDFAnalyzer(FormatAnalyzer):
         indicators = self._build_indicators(features)
         result.features = features
         result.indicators = indicators
+        result.heuristics = build_pdf_heuristics(features)
         result.risk_score = self._calculate_risk_score(indicators)
         result.risk_factors = [str(ind.get("type", "")) for ind in indicators if ind.get("type")]
 
@@ -217,7 +225,7 @@ class PDFAnalyzer(FormatAnalyzer):
         features["open_actions"] = self._dedupe_strings(open_actions)
 
         if action_type == "/Launch":
-            launch_target = self._stringify(action.get("/F"))
+            launch_target = self._extract_launch_target(action)
             launch_actions = self._as_list(features["launch_actions"])
             launch_actions.append(launch_target or "launch")
             features["launch_actions"] = self._dedupe_strings(launch_actions)
@@ -278,7 +286,25 @@ class PDFAnalyzer(FormatAnalyzer):
 
             if _ACTION_LAUNCH_RE.search(raw):
                 launch_actions = self._as_list(features["launch_actions"])
-                launch_actions.append("/Launch")
+                raw_targets: list[str] = []
+                win_targets = [
+                    target.strip()
+                    for target in _WIN_LAUNCH_TARGET_RE.findall(text_l)
+                    if target.strip()
+                ]
+                filespec_targets = [
+                    target.strip()
+                    for target in _FILESPEC_LAUNCH_TARGET_RE.findall(text_l)
+                    if target.strip()
+                ]
+                direct_targets = [
+                    target.strip()
+                    for target in _DIRECT_LAUNCH_TARGET_RE.findall(text_l)
+                    if target.strip()
+                ]
+                preferred_targets = win_targets or filespec_targets or direct_targets
+                raw_targets.extend(preferred_targets)
+                launch_actions.extend(raw_targets or ["/Launch"])
                 features["launch_actions"] = self._dedupe_strings(launch_actions)
 
             if _OPEN_ACTION_RE.search(raw):
@@ -496,6 +522,21 @@ class PDFAnalyzer(FormatAnalyzer):
                 file_meta["executable"] = True
 
             embedded_files.append(file_meta)
+
+    def _extract_launch_target(self, action: dict[str, Any]) -> str:
+        nested_win = self._resolve_indirect(action.get("/Win"))
+        if isinstance(nested_win, dict):
+            win_target = self._stringify(nested_win.get("/F"))
+            if win_target:
+                return win_target
+
+        launch_target = self._resolve_indirect(action.get("/F"))
+        if isinstance(launch_target, dict):
+            nested_target = self._stringify(launch_target.get("/F"))
+            if nested_target:
+                return nested_target
+
+        return self._stringify(action.get("/F"))
 
     @staticmethod
     def _resolve_indirect(value: Any) -> Any:

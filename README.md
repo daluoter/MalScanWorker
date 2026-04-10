@@ -440,6 +440,13 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 - 格式分析階段可提交抽取 artifacts 並建立 sub-job
 - 遞迴提交沿用 max depth 保護機制，避免無限擴張
 
+### 結構化 Heuristics 輸出
+
+- `AnalyzerResult` 與 `results.format_analysis` 現在會保留 `heuristics` 陣列
+- 每筆 heuristic 會帶出 `key`、`category`、`scope`、`role`、`severity`、`confidence`、`summary`、`evidence`、`tags`
+- 目前已覆蓋 PE、PDF、Office、LNK、Script 等可解釋的靜態 heuristic
+- `archive-extract` 也會輸出 `archive_summary` 與 `heuristics`，涵蓋可執行檔集中、密碼保護、path traversal、深層巢狀等 archive signals
+
 ### 本階段刻意不做
 
 - 不重構 `DocumentAnalysisStage` 內部為原生 Office analyzer（僅 adapter）
@@ -472,9 +479,16 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 - YARA metadata-based classification
 - raw IOC extraction
 - `format-analysis` structured indicators
+- `format-analysis` / `archive-extract` structured heuristics
 - deobfuscation evidence
 - sandbox behaviors
 - descendant inheritance（由 backend rollup）
+
+### Heuristic Evidence 正規化
+
+- Backend 會先將 `format-analysis` 與 `archive-extract` 的 `heuristics` 正規化成 scoring evidence，再回退到 legacy indicators / `risk_score`
+- Heuristic evidence 會依 family cap 分組限制權重，避免單一格式或單一類型 signals 過度放大最終分數
+- 目前包含 `entropy`、`packer`、`api`、`structure`、`resource`、`script`、`lolbin`、`archive` 等 cap families
 
 ### 報告相容欄位
 

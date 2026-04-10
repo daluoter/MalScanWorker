@@ -175,3 +175,36 @@ def test_ev_helper_defaults_cap_group_to_misc() -> None:
     record = _ev("static", "macro_autoexec", "medium", 30)
 
     assert record.cap_group == "misc"
+
+
+def test_entropy_heuristics_are_capped_by_entropy_family() -> None:
+    decision = score_direct_evidence(
+        direct_evidence=[
+            _ev("format-analysis", "entropy.high_region_cluster", "weak", 8, "heuristic_entropy"),
+            _ev("format-analysis", "entropy.high_region_cluster", "weak", 8, "heuristic_entropy"),
+            _ev("format-analysis", "entropy.high_region_cluster", "weak", 8, "heuristic_entropy"),
+        ]
+    )
+
+    assert decision.breakdown.local_score == 12
+    assert decision.risk_score == 12
+
+
+def test_archive_heuristics_are_capped_by_archive_family() -> None:
+    decision = score_direct_evidence(
+        direct_evidence=[
+            _ev(
+                "archive-extract",
+                "archive.executable_concentration",
+                "medium",
+                18,
+                "heuristic_archive",
+            ),
+            _ev(
+                "archive-extract", "archive.path_traversal_member", "weak", 10, "heuristic_archive"
+            ),
+            _ev("archive-extract", "archive.deep_nesting", "weak", 8, "heuristic_archive"),
+        ]
+    )
+
+    assert decision.breakdown.local_score == 25

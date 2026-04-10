@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from malscan_worker.analyzers.base import AnalyzerIndicator, AnalyzerResult, FormatAnalyzer
+from malscan_worker.heuristics.models import HeuristicHit, make_hit
 from malscan_worker.stages.base import StageContext
 from malscan_worker.stages.document_analysis import DocumentAnalysisStage, detect_document_type
 
@@ -79,6 +80,7 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
             "embedded_objects": embedded_objects,
             "parser_findings": parser_findings,
         }
+        heuristics = self._build_heuristics(findings, indicators)
 
         return AnalyzerResult(
             analyzer_name=self.name,
@@ -92,6 +94,7 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
                 for factor in (str(indicator.get("type", "")) for indicator in indicators)
                 if factor
             ],
+            heuristics=heuristics,
             errors=errors,
             extracted_artifacts=extracted_artifacts,
         )
@@ -209,6 +212,99 @@ class OfficeAnalyzerAdapter(FormatAnalyzer):
                 ]
 
         return []
+
+    def _build_heuristics(
+        self,
+        findings: dict[str, Any],
+        indicators: list[AnalyzerIndicator],
+    ) -> list[HeuristicHit]:
+        heuristics: list[HeuristicHit] = []
+
+        macros = findings.get("macros")
+        suspicious_keywords = findings.get("suspicious_keywords")
+        if not isinstance(suspicious_keywords, list):
+            suspicious_keywords = []
+        if (
+            isinstance(macros, dict)
+            and macros.get("auto_exec")
+            and (macros.get("suspicious") or suspicious_keywords)
+        ):
+            heuristics.append(
+                make_hit(
+                    key="office.macro_autoexec_launcher",
+                    category="behavior",
+                    scope="office",
+                    role="detection",
+                    severity="high",
+                    confidence=0.84,
+                    summary=(
+                        "Office macros combine auto-exec behavior with suspicious launcher "
+                        "keywords"
+                    ),
+                    evidence={
+                        "macros": macros,
+                        "suspicious_keywords": suspicious_keywords[:10],
+                    },
+                    tags=("office", "macro", "autoexec"),
+                )
+            )
+
+        parser_findings = findings.get("parser_findings")
+        if not isinstance(parser_findings, list):
+            parser_findings = []
+
+        external_types = sorted(
+            {
+                str(indicator.get("type", ""))
+                for indicator in indicators
+                if str(indicator.get("type", "")) == "external_template"
+            }
+        )
+        if not external_types and self._has_attached_template_relationship(
+            indicators, parser_findings
+        ):
+            external_types = ["external_relationship"]
+        if external_types:
+            heuristics.append(
+                make_hit(
+                    key="office.external_template_execution",
+                    category="behavior",
+                    scope="office",
+                    role="detection",
+                    severity="high",
+                    confidence=0.83,
+                    summary=(
+                        "Office document references external template relationships for "
+                        "execution"
+                    ),
+                    evidence={"indicator_types": external_types},
+                    tags=("office", "external-template", "relationship"),
+                )
+            )
+
+        return heuristics
+
+    @staticmethod
+    def _has_attached_template_relationship(
+        indicators: list[AnalyzerIndicator],
+        parser_findings: list[object],
+    ) -> bool:
+        has_external_relationship = any(
+            str(indicator.get("type", "")) == "external_relationship" for indicator in indicators
+        )
+        if not has_external_relationship:
+            return False
+
+        for finding in parser_findings:
+            if not isinstance(finding, dict):
+                continue
+            finding_type = str(finding.get("type", "")).lower()
+            finding_value = str(finding.get("value", "")).lower()
+            if finding_type == "attachedtemplate":
+                return True
+            if finding_type == "ooxml_rel_type" and "attachedtemplate" in finding_value:
+                return True
+        return False
 
     def _map_severity(self, indicator_type: str, item: dict[str, Any]) -> str:
         indicator_type_l = indicator_type.lower()

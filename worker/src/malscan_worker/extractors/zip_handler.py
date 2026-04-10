@@ -108,11 +108,13 @@ class ZipHandler(FormatHandler):
     ) -> ExtractionResult:
         files: list[ExtractedFile] = []
         warnings: list[str] = []
+        password_protected = False
 
         with zipfile.ZipFile(str(file_path), "r") as zf:
             # Check for encryption
             for info in zf.infolist():
                 if info.flag_bits & 0x1:  # encrypted
+                    password_protected = True
                     if not password:
                         raise ArchivePasswordRequiredError("zip")
                     break
@@ -123,7 +125,11 @@ class ZipHandler(FormatHandler):
             ratio_warning = check_expansion_ratio(archive_size, total_uncompressed, limits)
             if ratio_warning:
                 return ExtractionResult(
-                    files=[], malicious=True, reason=ratio_warning, archive_type="zip"
+                    files=[],
+                    malicious=True,
+                    reason=ratio_warning,
+                    archive_type="zip",
+                    password_protected=password_protected,
                 )
 
             total_extracted_bytes = 0
@@ -161,21 +167,24 @@ class ZipHandler(FormatHandler):
                             if not chunk:
                                 break
                             written += len(chunk)
-                            # Streaming ratio check
-                            if (
-                                archive_size > 0
-                                and written / archive_size > limits.max_expansion_ratio
-                            ):
+                            reason = _stream_limit_reason(
+                                archive_size=archive_size,
+                                current_total_extracted_bytes=total_extracted_bytes,
+                                current_file_written=written,
+                                limits=limits,
+                            )
+                            if reason is not None:
                                 os.remove(target)
                                 return ExtractionResult(
                                     files=files,
                                     malicious=True,
-                                    reason="Zip bomb: expansion ratio exceeded during extraction",
+                                    reason=reason,
                                     archive_type="zip",
+                                    password_protected=password_protected,
                                 )
                             dst.write(chunk)
                 except RuntimeError as e:
-                    if "password" in str(e).lower() or "Bad password" in str(e):
+                    if _is_password_error(e):
                         raise ArchiveWrongPasswordError("zip") from e
                     raise
 
@@ -189,7 +198,12 @@ class ZipHandler(FormatHandler):
                     )
                 )
 
-        return ExtractionResult(files=files, warnings=warnings, archive_type="zip")
+        return ExtractionResult(
+            files=files,
+            warnings=warnings,
+            archive_type="zip",
+            password_protected=password_protected,
+        )
 
     # ------------------------------------------------------------------
     # pyzipper fallback for AES-encrypted zips
@@ -207,11 +221,13 @@ class ZipHandler(FormatHandler):
 
         files: list[ExtractedFile] = []
         warnings: list[str] = []
+        password_protected = False
 
         with pyzipper.AESZipFile(str(file_path), "r") as zf:
             # Check for encryption
             for info in zf.infolist():
                 if info.flag_bits & 0x1:  # encrypted
+                    password_protected = True
                     if not password:
                         raise ArchivePasswordRequiredError("zip")
                     break
@@ -221,7 +237,11 @@ class ZipHandler(FormatHandler):
             ratio_warning = check_expansion_ratio(archive_size, total_uncompressed, limits)
             if ratio_warning:
                 return ExtractionResult(
-                    files=[], malicious=True, reason=ratio_warning, archive_type="zip"
+                    files=[],
+                    malicious=True,
+                    reason=ratio_warning,
+                    archive_type="zip",
+                    password_protected=password_protected,
                 )
 
             total_extracted_bytes = 0
@@ -261,20 +281,24 @@ class ZipHandler(FormatHandler):
                             if not chunk:
                                 break
                             written += len(chunk)
-                            if (
-                                archive_size > 0
-                                and written / archive_size > limits.max_expansion_ratio
-                            ):
+                            reason = _stream_limit_reason(
+                                archive_size=archive_size,
+                                current_total_extracted_bytes=total_extracted_bytes,
+                                current_file_written=written,
+                                limits=limits,
+                            )
+                            if reason is not None:
                                 os.remove(target)
                                 return ExtractionResult(
                                     files=files,
                                     malicious=True,
-                                    reason="Zip bomb: expansion ratio exceeded during extraction",
+                                    reason=reason,
                                     archive_type="zip",
+                                    password_protected=password_protected,
                                 )
                             dst.write(chunk)
                 except RuntimeError as e:
-                    if "password" in str(e).lower() or "bad password" in str(e).lower():
+                    if _is_password_error(e):
                         raise ArchiveWrongPasswordError("zip") from e
                     raise
 
@@ -288,4 +312,31 @@ class ZipHandler(FormatHandler):
                     )
                 )
 
-        return ExtractionResult(files=files, warnings=warnings, archive_type="zip")
+        return ExtractionResult(
+            files=files,
+            warnings=warnings,
+            archive_type="zip",
+            password_protected=password_protected,
+        )
+
+
+def _stream_limit_reason(
+    *,
+    archive_size: int,
+    current_total_extracted_bytes: int,
+    current_file_written: int,
+    limits: ExtractionLimits,
+) -> str | None:
+    cumulative_written = current_total_extracted_bytes + current_file_written
+    if cumulative_written > limits.max_extracted_bytes:
+        return "Zip bomb: total extracted bytes exceeded during extraction"
+
+    if archive_size > 0 and cumulative_written / archive_size > limits.max_expansion_ratio:
+        return "Zip bomb: expansion ratio exceeded during extraction"
+
+    return None
+
+
+def _is_password_error(error: RuntimeError) -> bool:
+    message = str(error).lower()
+    return "password" in message or "bad password" in message

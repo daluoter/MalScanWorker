@@ -199,7 +199,44 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
                 "risk_score": 37,
                 "risk_factors": ["packed"],
                 "indicators": [{"type": "suspicious_import", "severity": "high"}],
+                "heuristics": [
+                    {
+                        "key": "script.encoded_command_execution",
+                        "category": "script_token",
+                        "scope": "script",
+                        "role": "gate_signal",
+                        "severity": "high",
+                        "confidence": 0.9,
+                        "summary": "Encoded payload and execution primitives appear together",
+                        "evidence": {},
+                        "tags": (),
+                    }
+                ],
                 "features": {"entrypoint": 4096},
+            },
+            artifacts=[],
+        ),
+        StageResult(
+            stage_name="archive-extract",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={
+                "archive_type": "zip",
+                "heuristics": [
+                    {
+                        "key": "archive.executable_concentration",
+                        "category": "archive",
+                        "scope": "archive",
+                        "role": "corroborating",
+                        "severity": "medium",
+                        "confidence": 0.8,
+                        "summary": "Archive contains multiple executable-like members",
+                        "evidence": {"executable_members": 2},
+                        "tags": ("archive", "embedded-executable"),
+                    }
+                ],
             },
             artifacts=[],
         ),
@@ -208,8 +245,8 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
     report = _build_analysis_result("job-1", "file-1", ctx, results, 123)
 
     assert report["verdict"] == "suspicious"
-    assert report["risk_level"] == "medium"
-    assert report["score"] == 59
+    assert report["risk_level"] == "high"
+    assert report["score"] == 84
     assert report["risk"]["policy_version"] == "msrs-v1"
     assert report["risk"]["breakdown"]["local_score"] >= 0
 
@@ -219,4 +256,9 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
     assert format_report["risk_score"] == 37
     assert format_report["risk_factors"] == ["packed"]
     assert format_report["indicators"][0]["severity"] == "high"
+    assert format_report["heuristics"][0]["key"] == "script.encoded_command_execution"
     assert format_report["features"] == {"entrypoint": 4096}
+
+    archive_report = report["results"]["archive_extract"]
+    assert archive_report["archive_type"] == "zip"
+    assert archive_report["heuristics"][0]["key"] == "archive.executable_concentration"

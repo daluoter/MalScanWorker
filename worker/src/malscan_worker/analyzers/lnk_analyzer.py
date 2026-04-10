@@ -18,6 +18,16 @@ from malscan_worker.analyzers.base import (
     FormatAnalyzer,
     JsonValue,
 )
+from malscan_worker.analyzers.script_analyzer import (
+    _DOWNLOAD_PATTERNS,
+    _EXEC_PATTERNS,
+    _FILE_PATTERNS,
+    _NETWORK_PATTERNS,
+    _PROCESS_PATTERNS,
+    _REGISTRY_PATTERNS,
+    ScriptAnalyzer,
+)
+from malscan_worker.heuristics.script import build_script_heuristics
 
 if TYPE_CHECKING:
     from malscan_worker.stages.base import StageContext
@@ -83,6 +93,7 @@ _ENCODED_COMMAND_RE = re.compile(
     r"(?:^|\s)-(?:e|enc|encodedcommand)\s+([A-Za-z0-9+/=]{8,})", re.IGNORECASE
 )
 _ENVVAR_RE = re.compile(r"%[A-Za-z0-9_]+%|\$env:", re.IGNORECASE)
+_WRAPPER_EXEC_OPERATIONS = frozenset({"cmd_exec"})
 
 
 class LNKAnalyzer(FormatAnalyzer):
@@ -144,6 +155,9 @@ class LNKAnalyzer(FormatAnalyzer):
             features["decoded_command"] = decoded_command
 
         indicators = self._build_indicators(features)
+        script_features = self._build_script_features(features)
+        features.update(script_features)
+        result.heuristics = build_script_heuristics(script_features, scope="lnk")
         result.features = features
         result.indicators = indicators
         result.risk_score = self._calculate_risk_score(indicators)
@@ -448,6 +462,61 @@ class LNKAnalyzer(FormatAnalyzer):
             )
 
         return indicators
+
+    def _build_script_features(self, features: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        command_chain = str(features.get("command_chain") or "")
+        decoded_command = str(features.get("decoded_command") or "")
+        target_path = str(features.get("target_path") or "")
+        working_dir = str(features.get("working_dir") or "")
+        network_path = str(features.get("network_path") or "")
+
+        script_segments = [
+            segment
+            for segment in (command_chain, decoded_command, target_path, working_dir, network_path)
+            if segment
+        ]
+        script_text = "\n".join(script_segments)
+
+        exec_operations = ScriptAnalyzer()._collect_operation_hits(script_text, _EXEC_PATTERNS)
+        if download_operations := ScriptAnalyzer()._collect_operation_hits(
+            script_text, _DOWNLOAD_PATTERNS
+        ):
+            exec_operations = [
+                operation
+                for operation in exec_operations
+                if operation not in _WRAPPER_EXEC_OPERATIONS
+            ]
+
+        encoded_strings = ScriptAnalyzer()._detect_encoded_strings(script_text)
+        encoded_match = _ENCODED_COMMAND_RE.search(self._normalize_caret_obfuscation(command_chain))
+        if encoded_match and encoded_match.group(1) not in encoded_strings:
+            encoded_strings.append(encoded_match.group(1))
+
+        lines = script_text.splitlines()
+        obfuscation_score = ScriptAnalyzer()._calculate_obfuscation_score(
+            script_text, encoded_strings
+        )
+        return {
+            "text_preview": script_text[:1000],
+            "text_for_heuristics": script_text,
+            "encoded_strings": ScriptAnalyzer._as_json_list(encoded_strings),
+            "network_indicators": ScriptAnalyzer._as_json_list(
+                ScriptAnalyzer()._collect_operation_hits(script_text, _NETWORK_PATTERNS)
+            ),
+            "process_operations": ScriptAnalyzer._as_json_list(
+                ScriptAnalyzer()._collect_operation_hits(script_text, _PROCESS_PATTERNS)
+            ),
+            "registry_operations": ScriptAnalyzer._as_json_list(
+                ScriptAnalyzer()._collect_operation_hits(script_text, _REGISTRY_PATTERNS)
+            ),
+            "file_operations": ScriptAnalyzer._as_json_list(
+                ScriptAnalyzer()._collect_operation_hits(script_text, _FILE_PATTERNS)
+            ),
+            "download_operations": ScriptAnalyzer._as_json_list(download_operations),
+            "exec_operations": ScriptAnalyzer._as_json_list(exec_operations),
+            "max_line_length": max((len(line) for line in lines), default=0),
+            "obfuscation_score": obfuscation_score,
+        }
 
     @staticmethod
     def _normalize_caret_obfuscation(value: str) -> str:

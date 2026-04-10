@@ -172,6 +172,159 @@ def test_format_analysis_fallback_support_uses_plan_scoring() -> None:
     assert record.raw == {"risk_score": 22, "risk_factors": ["overlay", "entropy"]}
 
 
+def test_format_heuristics_are_normalized_before_legacy_indicator_fallback() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "clamav": {"infected": False, "threat_name": None},
+            "yara": {"matches": []},
+            "ioc-extract": {"urls": [], "domains": [], "ips": []},
+            "format-analysis": {
+                "heuristics": [
+                    {
+                        "key": "api.process_injection_cluster",
+                        "category": "api_pattern",
+                        "scope": "pe",
+                        "role": "gate_signal",
+                        "severity": "high",
+                        "confidence": 0.9,
+                        "summary": "Process injection API cluster detected",
+                        "evidence": {
+                            "matched": [
+                                "VirtualAllocEx",
+                                "WriteProcessMemory",
+                                "CreateRemoteThread",
+                            ]
+                        },
+                        "tags": ["injection"],
+                    }
+                ],
+                "risk_score": 0,
+                "indicators": [
+                    {
+                        "type": "header_inconsistency",
+                        "severity": "medium",
+                        "detail": "Section sizes do not align cleanly",
+                    }
+                ],
+            },
+            "deobfuscation": {},
+            "archive-extract": {},
+            "sandbox": {},
+        },
+    )
+
+    heuristic_record = next(
+        record for record in records if record.kind == "api.process_injection_cluster"
+    )
+
+    assert heuristic_record.source == "format-analysis"
+    assert heuristic_record.tier == "strong"
+    assert heuristic_record.severity == "high"
+    assert heuristic_record.points == 40
+    assert heuristic_record.cap_group == "heuristic_api"
+    assert heuristic_record.reason == "Process injection API cluster detected"
+
+
+def test_format_heuristics_disable_risk_score_support_without_skipping_indicators() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "format-analysis": {
+                "heuristics": [
+                    {
+                        "key": "packer.known_section_name",
+                        "category": "packer",
+                        "scope": "pe",
+                        "role": "corroborating",
+                        "severity": "low",
+                        "confidence": 0.7,
+                        "summary": "Known packer section name present",
+                    }
+                ],
+                "indicators": [
+                    {
+                        "type": "unknown_structure_issue",
+                        "severity": "low",
+                        "detail": "Minor packing indicators",
+                    }
+                ],
+                "risk_score": 40,
+                "risk_factors": ["overlay", "entropy"],
+            }
+        },
+    )
+
+    kinds = {record.kind for record in records if record.source == "format-analysis"}
+
+    assert "packer.known_section_name" in kinds
+    assert "format_structural_anomaly_low" in kinds
+    assert "format_risk_score_support" not in kinds
+
+
+def test_archive_heuristics_are_normalized_to_archive_cap_group() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "clamav": {"infected": False, "threat_name": None},
+            "yara": {"matches": []},
+            "ioc-extract": {"urls": [], "domains": [], "ips": []},
+            "format-analysis": {},
+            "deobfuscation": {},
+            "archive-extract": {
+                "heuristics": [
+                    {
+                        "key": "archive.executable_concentration",
+                        "category": "archive",
+                        "scope": "archive",
+                        "role": "corroborating",
+                        "severity": "medium",
+                        "confidence": 0.8,
+                        "summary": "Archive contains multiple executable-like members",
+                        "evidence": {"executable_member_count": 3},
+                        "tags": ["archive"],
+                    }
+                ]
+            },
+            "sandbox": {},
+        },
+    )
+
+    record = next(item for item in records if item.kind == "archive.executable_concentration")
+
+    assert record.source == "archive-extract"
+    assert record.cap_group == "heuristic_archive"
+    assert record.points == 18
+    assert record.tier == "medium"
+
+
+def test_null_heuristics_are_ignored_without_breaking_adapter() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "format-analysis": {
+                "heuristics": None,
+                "indicators": [
+                    {
+                        "type": "unknown_structure_issue",
+                        "severity": "low",
+                        "detail": "Minor packing indicators",
+                    }
+                ],
+                "risk_score": 12,
+            },
+            "archive-extract": {
+                "heuristics": None,
+            },
+        },
+    )
+
+    assert {record.kind for record in records} == {
+        "format_structural_anomaly_low",
+        "format_risk_score_support",
+    }
+
+
 def test_format_analysis_macro_presence_maps_to_low_risk_loader_signal() -> None:
     records = build_direct_evidence(
         artifact_id="artifact-1",

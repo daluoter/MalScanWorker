@@ -36,6 +36,7 @@ class ExtractionResult:
     reason: str | None = None
     warnings: list[str] = field(default_factory=list)
     archive_type: str | None = None
+    password_protected: bool = False
 
 
 class FormatHandler(ABC):

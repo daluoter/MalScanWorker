@@ -22,6 +22,28 @@ FORMAT_SEVERITY_MAP = {
     "medium": ("format_structural_anomaly_medium", "medium", 20),
 }
 
+HEURISTIC_MAP = {
+    "entropy.high_region_cluster": ("weak", 8, "heuristic_entropy"),
+    "packer.known_section_name": ("weak", 10, "heuristic_packer"),
+    "packer.sparse_imports_high_entropy": ("medium", 18, "heuristic_packer"),
+    "api.process_injection_cluster": ("strong", 40, "heuristic_api"),
+    "structure.overlay_anomaly": ("weak", 10, "heuristic_structure"),
+    "resource.embedded_executable": ("medium", 22, "heuristic_resource"),
+    "script.encoded_command_execution": ("strong", 45, "heuristic_script"),
+    "script.download_execute_chain": ("medium", 20, "heuristic_script"),
+    "script.amsi_bypass": ("medium", 18, "heuristic_script"),
+    "script.long_line_entropy_cluster": ("weak", 8, "heuristic_script"),
+    "lolbin.reference_only": ("weak", 6, "heuristic_lolbin"),
+    "lolbin.execution_chain": ("medium", 18, "heuristic_lolbin"),
+    "archive.password_protected": ("weak", 6, "heuristic_archive"),
+    "archive.executable_concentration": ("medium", 18, "heuristic_archive"),
+    "archive.path_traversal_member": ("weak", 10, "heuristic_archive"),
+    "archive.deep_nesting": ("weak", 8, "heuristic_archive"),
+    "office.external_template_execution": ("strong", 45, "heuristic_structure"),
+    "office.macro_autoexec_launcher": ("medium", 20, "heuristic_script"),
+    "pdf.launch_action_executable": ("strong", 45, "heuristic_structure"),
+}
+
 FORMAT_OVERRIDE_INDICATORS = {"macro_auto_exec", "embedded_executable", "suspicious_launcher"}
 PAYLOAD_EXECUTION_MARKERS = ("powershell", "cmd.exe", "rundll32", "regsvr32")
 SANDBOX_CONFIRMED_BEHAVIORS = {"process_injection", "credential_theft", "ransomware"}
@@ -31,6 +53,12 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, str)]
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _append(records: list[EvidenceRecord], **kwargs: Any) -> None:
@@ -186,12 +214,45 @@ def _append_iocs(
         )
 
 
+def _append_heuristic_records(
+    records: list[EvidenceRecord],
+    artifact_id: str | None,
+    source: str,
+    heuristics: list[Any],
+) -> None:
+    for hit in heuristics:
+        if not isinstance(hit, dict):
+            continue
+        key = str(hit.get("key", "")).strip()
+        if not key:
+            continue
+        tier, points, cap_group = HEURISTIC_MAP.get(
+            key,
+            ("weak", 5, "heuristic_structure"),
+        )
+        severity = "high" if tier == "strong" else ("medium" if tier == "medium" else "low")
+        _append(
+            records,
+            source=source,
+            kind=key,
+            tier=tier,
+            severity=severity,
+            confidence=float(hit.get("confidence", 0.5) or 0.5),
+            points=points,
+            cap_group=cap_group,
+            artifact_id=artifact_id,
+            reason=str(hit.get("summary", key)),
+            raw=dict(hit),
+        )
+
+
 def _append_format_analysis(
     records: list[EvidenceRecord],
     artifact_id: str | None,
     finding: dict[str, Any],
 ) -> None:
     indicators = list(finding.get("indicators", []))
+    heuristics = _dict_list(finding.get("heuristics"))
 
     for indicator in indicators:
         indicator_type = str(indicator.get("type", ""))
@@ -250,7 +311,7 @@ def _append_format_analysis(
 
     risk_score = int(finding.get("risk_score", 0) or 0)
     support_points = min(15, risk_score // 4)
-    if len(indicators) < 2 and support_points > 0:
+    if not heuristics and len(indicators) < 2 and support_points > 0:
         _append(
             records,
             source="format-analysis",
@@ -353,7 +414,22 @@ def build_direct_evidence(
 
     format_analysis = stage_findings.get("format-analysis")
     if isinstance(format_analysis, dict):
+        _append_heuristic_records(
+            records,
+            artifact_id,
+            "format-analysis",
+            _dict_list(format_analysis.get("heuristics")),
+        )
         _append_format_analysis(records, artifact_id, format_analysis)
+
+    archive_extract = stage_findings.get("archive-extract")
+    if isinstance(archive_extract, dict):
+        _append_heuristic_records(
+            records,
+            artifact_id,
+            "archive-extract",
+            _dict_list(archive_extract.get("heuristics")),
+        )
 
     deobfuscation = stage_findings.get("deobfuscation")
     if isinstance(deobfuscation, dict):
