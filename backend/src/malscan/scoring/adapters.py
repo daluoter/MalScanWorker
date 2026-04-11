@@ -69,6 +69,7 @@ def _append(records: list[EvidenceRecord], **kwargs: Any) -> None:
             related_artifact_id=None,
             depth=0,
             tags=(),
+            score_contribution={},
             **kwargs,
         )
     )
@@ -219,6 +220,8 @@ def _append_heuristic_records(
     artifact_id: str | None,
     source: str,
     heuristics: list[Any],
+    *,
+    analyzer: str | None = None,
 ) -> None:
     for hit in heuristics:
         if not isinstance(hit, dict):
@@ -234,6 +237,8 @@ def _append_heuristic_records(
         _append(
             records,
             source=source,
+            stage=source,
+            analyzer=analyzer,
             kind=key,
             tier=tier,
             severity=severity,
@@ -251,6 +256,7 @@ def _append_format_analysis(
     artifact_id: str | None,
     finding: dict[str, Any],
 ) -> None:
+    analyzer = str(finding.get("analyzer") or "") or None
     indicators = list(finding.get("indicators", []))
     heuristics = _dict_list(finding.get("heuristics"))
 
@@ -263,6 +269,8 @@ def _append_format_analysis(
             _append(
                 records,
                 source="format-analysis",
+                stage="format-analysis",
+                analyzer=analyzer,
                 kind="format_loader_or_dropper_pattern",
                 tier="medium",
                 severity="medium",
@@ -279,6 +287,8 @@ def _append_format_analysis(
             _append(
                 records,
                 source="format-analysis",
+                stage="format-analysis",
+                analyzer=analyzer,
                 kind="format_structural_anomaly_medium",
                 tier="medium",
                 severity="medium",
@@ -298,6 +308,8 @@ def _append_format_analysis(
         _append(
             records,
             source="format-analysis",
+            stage="format-analysis",
+            analyzer=analyzer,
             kind=kind,
             tier=tier,
             severity=_severity_for_tier(tier),
@@ -315,6 +327,8 @@ def _append_format_analysis(
         _append(
             records,
             source="format-analysis",
+            stage="format-analysis",
+            analyzer=analyzer,
             kind="format_risk_score_support",
             tier="weak",
             severity="low",
@@ -419,6 +433,7 @@ def build_direct_evidence(
             artifact_id,
             "format-analysis",
             _dict_list(format_analysis.get("heuristics")),
+            analyzer=str(format_analysis.get("analyzer") or "") or None,
         )
         _append_format_analysis(records, artifact_id, format_analysis)
 

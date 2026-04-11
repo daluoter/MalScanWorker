@@ -1,7 +1,10 @@
 """Tests for the local direct-evidence scoring engine."""
 
 from malscan.scoring import EvidenceRecord
+from malscan.scoring.adapters import build_direct_evidence
 from malscan.scoring.engine import score_direct_evidence
+from malscan.scoring.models import RiskDecision, ScoreBreakdown
+from malscan.scoring.tree import merge_with_descendants
 
 
 def _ev(
@@ -208,3 +211,67 @@ def test_archive_heuristics_are_capped_by_archive_family() -> None:
     )
 
     assert decision.breakdown.local_score == 25
+
+
+def test_score_direct_evidence_returns_score_trace_components() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "format-analysis": {
+                "analyzer": "script",
+                "heuristics": [
+                    {
+                        "key": "script.encoded_command_execution",
+                        "category": "script_token",
+                        "scope": "script",
+                        "role": "gate_signal",
+                        "severity": "high",
+                        "confidence": 0.9,
+                        "summary": "Encoded payload and execution primitives appear together",
+                        "evidence": {"exec_operations": ["powershell", "iex"]},
+                    }
+                ],
+            }
+        },
+    )
+
+    decision = score_direct_evidence(direct_evidence=records)
+
+    assert decision.score_trace["components"][0]["type"] == "evidence"
+    assert decision.score_trace["components"][0]["artifact_id"] == "artifact-1"
+
+
+def test_merge_with_descendants_returns_descendant_inheritance_components() -> None:
+    local = RiskDecision(
+        risk_score=20,
+        risk_level="low",
+        legacy_verdict="suspicious",
+        evidence=[],
+        top_evidence=[],
+        breakdown=ScoreBreakdown(
+            local_score=20,
+            inherited_score=0,
+            synergy_bonus=0,
+            dampener=0,
+            final_score=20,
+        ),
+        score_trace={"formula": "", "components": [], "gates": {}, "breakdown": {}},
+    )
+
+    final = merge_with_descendants(
+        local=local,
+        descendants=[
+            {
+                "artifact_id": "artifact-child-1",
+                "sha256": "b" * 64,
+                "relative_depth": 1,
+                "risk_level": "malicious",
+                "risk_score": 95,
+                "origin_path": "payload.exe",
+                "verdict": "malicious",
+                "extraction_note": None,
+            }
+        ],
+    )
+
+    assert final.score_trace["components"][-1]["type"] == "descendant_inheritance"

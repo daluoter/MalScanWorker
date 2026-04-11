@@ -34,6 +34,7 @@ def merge_with_descendants(
     seen_hashes: set[str] = set()
     top_descendants: list[dict[str, Any]] = []
     branch_scores: list[int] = []
+    descendant_components: list[dict[str, Any]] = []
     malicious_descendants = 0
     high_descendants = 0
     direct_child_malicious = False
@@ -60,6 +61,21 @@ def merge_with_descendants(
         descendant_copy["inherited_points"] = inherited_points
         top_descendants.append(descendant_copy)
         branch_scores.append(inherited_points)
+        descendant_components.append(
+            {
+                "type": "descendant_inheritance",
+                "artifact_id": local.evidence[0].artifact_id if local.evidence else None,
+                "related_artifact_id": descendant.get("artifact_id"),
+                "relative_depth": depth,
+                "source_score": int(descendant.get("risk_score") or 0),
+                "applied_points": inherited_points,
+                "reason": (
+                    "direct malicious child artifact inherited into root report"
+                    if depth == 1 and level == "malicious"
+                    else "descendant risk inherited into root report"
+                ),
+            }
+        )
 
         if level == "malicious":
             malicious_descendants += 1
@@ -122,4 +138,16 @@ def merge_with_descendants(
             "top_descendants": top_descendants[:3],
         },
         policy_version=local.policy_version,
+        score_trace={
+            "formula": local.score_trace.get("formula", ""),
+            "components": [*list(local.score_trace.get("components", [])), *descendant_components],
+            "gates": dict(local.score_trace.get("gates", {})),
+            "breakdown": {
+                "local_score": local.breakdown.local_score,
+                "inherited_score": inherited_score,
+                "synergy_bonus": local.breakdown.synergy_bonus,
+                "dampener": local.breakdown.dampener,
+                "final_score": final_score,
+            },
+        },
     )

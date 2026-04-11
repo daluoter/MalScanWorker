@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from malscan_worker.config import get_settings
 from malscan_worker.db import (
     _engine,
+    ensure_root_artifact,
     get_job_for_context,
     update_job_result,
     update_job_stage,
@@ -164,6 +165,7 @@ def _build_analysis_result(
         "urls": merged_urls,
         "domains": merged_domains,
         "ips": merged_ips,
+        "ioc_items": list(ioc_findings.get("ioc_items") or []),
         "hashes": {
             "md5": ioc_findings.get("md5", ""),
             "sha1": ioc_findings.get("sha1", ""),
@@ -204,6 +206,8 @@ def _build_analysis_result(
                 "name": r.stage_name,
                 "status": r.status,
                 "duration_ms": r.duration_ms,
+                "started_at": r.started_at.isoformat(),
+                "ended_at": r.ended_at.isoformat(),
             }
             for r in results
         ],
@@ -236,15 +240,25 @@ def _build_analysis_result(
 
     def _serialize_evidence_entry(entry: Any) -> dict[str, Any]:
         return {
+            "id": entry.evidence_id,
             "source": entry.source,
             "kind": entry.kind,
             "tier": entry.tier,
             "severity": entry.severity,
+            "confidence": entry.confidence,
             "points": entry.points,
             "scope": entry.scope,
             "depth": entry.depth,
+            "artifact_id": entry.artifact_id,
+            "related_artifact_id": entry.related_artifact_id,
+            "stage": entry.stage,
+            "analyzer": entry.analyzer,
             "reason": entry.reason,
             "raw": dict(entry.raw),
+            "finding_ids": [],
+            "ioc_ids": [],
+            "decoded_ids": [],
+            "score_contribution": dict(entry.score_contribution),
         }
 
     risk = {
@@ -265,9 +279,11 @@ def _build_analysis_result(
         "evidence": [_serialize_evidence_entry(entry) for entry in decision.evidence],
         "top_evidence": [_serialize_evidence_entry(entry) for entry in decision.top_evidence],
         "descendant_summary": {},
+        "score_trace": dict(decision.score_trace),
     }
 
     return {
+        "report_schema_version": "mswr-report-v2",
         "job_id": job_id,
         "file": file_info,
         "verdict": decision.legacy_verdict,
@@ -418,6 +434,17 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
                 root_job_id=job_data.get("root_job_id") or job_id,
                 ancestor_hashes=set(job_data.get("ancestor_hashes", [])),
             )
+
+            root_artifact = await ensure_root_artifact(
+                job_id=job_id,
+                root_job_id=ctx.root_job_id or job_id,
+                sha256=ctx.sha256,
+                size=file_path.stat().st_size,
+                original_filename=ctx.original_filename,
+                existing_artifact_id=ctx.root_artifact_id or ctx.artifact_id,
+            )
+            ctx.root_artifact_id = root_artifact["root_id"]
+            ctx.artifact_id = ctx.artifact_id or root_artifact["id"]
 
             # Update status to indicate parallel static analysis
             await update_job_stage(job_id, "static_analysis", stages_done)

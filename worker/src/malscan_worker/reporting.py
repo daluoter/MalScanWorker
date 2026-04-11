@@ -9,6 +9,7 @@ from malscan.scoring.policy import POLICY_VERSION
 def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[str, Any]:
     """Build final report payload when archive password attempts are exhausted."""
     return {
+        "report_schema_version": "mswr-report-v2",
         "job_id": job_data["job_id"],
         "file": {
             "file_id": job_data["file_id"],
@@ -38,6 +39,7 @@ def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[s
             "evidence": [],
             "top_evidence": [],
             "descendant_summary": {},
+            "score_trace": {},
         },
         "results": {
             "av_result": {
@@ -67,13 +69,52 @@ def build_password_attempts_exhausted_report(job_data: dict[str, Any]) -> dict[s
                 "extracted_count": 0,
                 "sub_jobs_created": 0,
                 "total_extracted_bytes": 0,
-                "reason": "Archive extraction failed after 3 incorrect password attempts",
+                "reason": "連續 3 次密碼錯誤，封存檔解壓失敗。",
                 "extraction_failed": True,
             },
         },
         "timings": {
             "total_ms": 0,
             "stages": [],
+        },
+        "explainability": {
+            "summary": {
+                "headline": "因密碼嘗試次數耗盡，封存內容未被分析。",
+                "primary_artifact_id": None,
+                "primary_artifact_path": None,
+                "top_findings": [],
+                "final_verdict_explainer": "此報告僅反映最外層檔案的分析結果。",
+            },
+            "artifacts": [],
+            "findings": [],
+            "evidence": [],
+            "iocs": [],
+            "decoded_strings": [],
+            "uncertainties": [],
+            "timeline": [],
+            "failure_diagnostics": {
+                "status": "blocked",
+                "headline": "內層封存內容因密碼耗盡而無法分析。",
+                "diagnostics": [
+                    {
+                        "stage": "archive-extract",
+                        "code": "password_attempts_exhausted",
+                        "category": "blocked",
+                        "severity": "high",
+                        "likely_effect": "possible_false_negative",
+                        "confidence": "high",
+                        "message": "連續 3 次密碼錯誤，封存檔解壓失敗。",
+                        "recommended_action": "請取得正確密碼後重新提交分析。",
+                    }
+                ],
+                "suspected_miss_stages": [
+                    {
+                        "stage": "archive-extract",
+                        "reason": "內層檔案未曾被解壓，因此未進入分析流程。",
+                        "confidence": "high",
+                    }
+                ],
+            },
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     }

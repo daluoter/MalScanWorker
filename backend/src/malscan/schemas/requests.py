@@ -134,15 +134,25 @@ class SandboxResult(BaseModel):
 class RiskEvidence(BaseModel):
     """Single normalized risk evidence entry."""
 
+    id: str | None = None
     source: str
     kind: str
     tier: str
     severity: str
+    confidence: float | None = None
     points: int
     scope: str
     depth: int
+    artifact_id: str | None = None
+    related_artifact_id: str | None = None
+    stage: str | None = None
+    analyzer: str | None = None
     reason: str
     raw: dict[str, Any] = Field(default_factory=dict)
+    finding_ids: list[str] = Field(default_factory=list)
+    ioc_ids: list[str] = Field(default_factory=list)
+    decoded_ids: list[str] = Field(default_factory=list)
+    score_contribution: dict[str, Any] = Field(default_factory=dict)
 
 
 class RiskBreakdown(BaseModel):
@@ -169,6 +179,27 @@ class RiskSummary(BaseModel):
     evidence: list[RiskEvidence] = Field(default_factory=list)
     top_evidence: list[RiskEvidence] = Field(default_factory=list)
     descendant_summary: dict[str, Any] = Field(default_factory=dict)
+    score_trace: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExplainabilitySummary(BaseModel):
+    headline: str = ""
+    primary_artifact_id: str | None = None
+    primary_artifact_path: str | None = None
+    top_findings: list[dict[str, Any]] = Field(default_factory=list)
+    final_verdict_explainer: str = ""
+
+
+class ExplainabilityBlock(BaseModel):
+    summary: ExplainabilitySummary = Field(default_factory=ExplainabilitySummary)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    iocs: list[dict[str, Any]] = Field(default_factory=list)
+    decoded_strings: list[dict[str, Any]] = Field(default_factory=list)
+    uncertainties: list[dict[str, Any]] = Field(default_factory=list)
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
+    failure_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalysisResults(BaseModel):
@@ -190,6 +221,8 @@ class StageTiming(BaseModel):
     name: str
     status: str
     duration_ms: int
+    started_at: str | None = None
+    ended_at: str | None = None
 
 
 class Timings(BaseModel):
@@ -227,6 +260,14 @@ class ArtifactTreeNode(BaseModel):
     risk_level: str | None = None
     policy_version: str | None = None
     job_id: str | None = None
+    display_path: str | None = None
+    archive_layer: int | None = None
+    analysis_status: str | None = None
+    primary_analyzer: str | None = None
+    finding_ids: list[str] = Field(default_factory=list)
+    uncertainty_ids: list[str] = Field(default_factory=list)
+    diagnostic_ids: list[str] = Field(default_factory=list)
+    top_finding_titles: list[str] = Field(default_factory=list)
     children: list["ArtifactTreeNode"] = Field(default_factory=list)
 
 
@@ -245,6 +286,8 @@ class ReportResponse(BaseModel):
     created_at: datetime
     child_jobs: list[ChildJobSummary] = Field(default_factory=list)
     artifact_tree: ArtifactTreeNode | None = None
+    report_schema_version: str = "mswr-report-v2"
+    explainability: ExplainabilityBlock = Field(default_factory=ExplainabilityBlock)
 
 
 class ApiError(BaseModel):

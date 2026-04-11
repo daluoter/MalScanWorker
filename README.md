@@ -526,6 +526,40 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 
 ---
 
+## Explainability v2 與繁中介面
+
+系統目前已將報告 explainability 區塊升級為 additive `mswr-report-v2` 合約，並維持既有 `GET /api/v1/reports/{job_id}` 相容欄位不變。
+
+### Explainability v2 重點
+
+- 保留既有 top-level `verdict`、`score`、`risk_level`
+- 保留 `risk.policy_version`、`risk.breakdown`、`risk.evidence`、`risk.top_evidence`、`risk.descendant_summary`
+- 保留 `results.*`
+- 保留 `artifact_tree`
+- 新增 `report_schema_version`
+- 新增 `risk.score_trace`
+- 新增 `explainability.summary`、`explainability.findings`、`explainability.iocs`、`explainability.decoded_strings`、`explainability.timeline`、`explainability.failure_diagnostics`
+
+### Root artifact 與 tree-aware 報告
+
+- 每份報告都會有 canonical root artifact
+- 若是舊資料缺少 root artifact，backend 會在回傳報告時補上 synthetic root
+- root report 的風險會反映整棵 descendant artifact tree，而不只是一層 local scan
+
+### 報告內容與 UI 語系
+
+- 前端報告頁、工作狀態頁、上傳頁的主要使用者可見文字已統一為繁體中文
+- backend/worker 直接產生的 explainability 摘要、timeline、failure diagnostics 等文案也已改為繁體中文
+- 這樣可避免只靠前端翻譯層維護，讓 API 與 UI 顯示內容保持一致
+
+### 密碼耗盡情境
+
+- 若封存檔連續 3 次密碼錯誤，worker 會產生 `verdict = "unknown"`、`risk_score = 0` 的保守報告
+- `results.archive_extract.reason` 與 `explainability.failure_diagnostics` 會明確標示為密碼耗盡造成的分析阻斷
+- 這類報告會明確說明只覆蓋最外層檔案，避免把未完成分析誤解為乾淨樣本
+
+---
+
 ## API 端點
 
 | 方法 | 路徑 | 處理服務 | 說明 |

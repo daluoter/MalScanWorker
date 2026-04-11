@@ -110,6 +110,63 @@ def test_deobfuscation_report_section_exists() -> None:
     assert report["results"]["deobfuscation"] == deob_findings
 
 
+def test_deobfuscation_candidates_keep_structured_ids_and_source_stage() -> None:
+    deob_findings = {
+        "candidates": [
+            {
+                "decoded_id": "decoded::artifact-1::1",
+                "content": "http://evil.test",
+                "content_encoding": "utf-8",
+                "content_byte_length": 16,
+                "serialized_content_byte_length": 16,
+                "content_truncated": False,
+                "confidence": 0.91,
+                "technique": "base64",
+                "truncated": False,
+                "tags": [],
+                "source_stage": "deobfuscation",
+                "provenance": {
+                    "decoder": "base64",
+                    "offset": 10,
+                    "length": 24,
+                    "key": None,
+                    "meta": {},
+                },
+            }
+        ],
+        "extracted_iocs": {
+            "urls": ["http://evil.test"],
+            "domains": ["evil.test"],
+            "ips": [],
+            "commands": [],
+        },
+        "techniques_found": ["base64"],
+        "total_decoded_bytes": 16,
+        "stats": {"final_candidate_count": 1},
+    }
+    report = _build_report(
+        [
+            _stage_result("file-type", {"mime_type": "application/octet-stream", "file_size": 123}),
+            _stage_result("clamav", {"infected": False, "threat_name": None}),
+            _stage_result("yara", {"matches": []}),
+            _stage_result(
+                "ioc-extract",
+                {
+                    "urls": [],
+                    "domains": [],
+                    "ips": [],
+                    "ioc_items": [],
+                },
+            ),
+            _stage_result("deobfuscation", deob_findings),
+        ]
+    )
+
+    candidate = report["results"]["deobfuscation"]["candidates"][0]
+    assert candidate["decoded_id"] == "decoded::artifact-1::1"
+    assert candidate["source_stage"] == "deobfuscation"
+
+
 def test_pure_deobfuscation_with_raw_ioc_stays_low_risk() -> None:
     report = _build_report(
         [

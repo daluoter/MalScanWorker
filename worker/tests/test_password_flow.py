@@ -109,7 +109,26 @@ def test_build_password_attempts_exhausted_report_has_zero_risk_block() -> None:
         "evidence": [],
         "top_evidence": [],
         "descendant_summary": {},
+        "score_trace": {},
     }
+    assert report["report_schema_version"] == "mswr-report-v2"
+    assert report["explainability"]["failure_diagnostics"]["status"] == "blocked"
+    assert (
+        report["explainability"]["failure_diagnostics"]["diagnostics"][0]["code"]
+        == "password_attempts_exhausted"
+    )
+    assert report["results"]["archive_extract"]["reason"] == "連續 3 次密碼錯誤，封存檔解壓失敗。"
+    assert (
+        report["explainability"]["summary"]["headline"] == "因密碼嘗試次數耗盡，封存內容未被分析。"
+    )
+    assert (
+        report["explainability"]["summary"]["final_verdict_explainer"]
+        == "此報告僅反映最外層檔案的分析結果。"
+    )
+    assert (
+        report["explainability"]["failure_diagnostics"]["headline"]
+        == "內層封存內容因密碼耗盡而無法分析。"
+    )
 
 
 @pytest.mark.asyncio
@@ -171,12 +190,14 @@ async def test_consumer_wrong_password_exhausted_stores_report_sets_done_and_ack
         "evidence": [],
         "top_evidence": [],
         "descendant_summary": {},
+        "score_trace": {},
     }
     assert (
         saved_result["results"]["archive_extract"]["reason"]
-        == "Archive extraction failed after 3 incorrect password attempts"
+        == "連續 3 次密碼錯誤，封存檔解壓失敗。"
     )
     assert saved_result["results"]["archive_extract"]["extraction_failed"] is True
+    assert saved_result["explainability"]["failure_diagnostics"]["status"] == "blocked"
     update_artifact_risk.assert_awaited_once_with(
         artifact_id=artifact_id,
         verdict="unknown",

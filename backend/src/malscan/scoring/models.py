@@ -24,9 +24,15 @@ class EvidenceRecord:
     reason: str
     tags: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict)
+    stage: str | None = None
+    analyzer: str | None = None
+    score_contribution: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "raw", MappingProxyType(dict(self.raw)))
+        object.__setattr__(
+            self, "score_contribution", MappingProxyType(dict(self.score_contribution))
+        )
 
 
 @dataclass
@@ -51,3 +57,4 @@ class RiskDecision:
     breakdown: ScoreBreakdown
     descendant_summary: dict[str, Any] = field(default_factory=dict)
     policy_version: str = POLICY_VERSION
+    score_trace: dict[str, Any] = field(default_factory=dict)
