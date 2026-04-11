@@ -42,6 +42,9 @@ export interface YaraHit {
     rule: string
     namespace: string
     description: string
+    classification?: string
+    confidence?: string
+    family?: string
     severity: string
     author: string
     tags: string[]
@@ -63,6 +66,232 @@ export interface StageTiming {
     name: string
     status: string
     duration_ms: number
+    started_at?: string | null
+    ended_at?: string | null
+}
+
+export interface RiskBreakdown {
+    local_score: number
+    inherited_score: number
+    synergy_bonus: number
+    dampener: number
+    final_score: number
+}
+
+export interface RiskEvidence {
+    id?: string | null
+    source: string
+    kind: string
+    tier: string
+    severity: string
+    confidence?: number | null
+    points: number
+    scope: string
+    depth: number
+    artifact_id?: string | null
+    related_artifact_id?: string | null
+    stage?: string | null
+    analyzer?: string | null
+    reason: string
+    raw: Record<string, unknown>
+    finding_ids: string[]
+    ioc_ids: string[]
+    decoded_ids: string[]
+    score_contribution: Record<string, unknown>
+}
+
+export interface ScoreTraceComponent {
+    type: string
+    artifact_id?: string | null
+    related_artifact_id?: string | null
+    evidence_id?: string | null
+    label?: string | null
+    base_points?: number | null
+    applied_points?: number | null
+    relative_depth?: number | null
+    source_score?: number | null
+    reason: string
+}
+
+export interface ScoreTrace {
+    formula: string
+    components: ScoreTraceComponent[]
+    gates: Record<string, unknown>
+    breakdown: Record<string, unknown>
+}
+
+export interface RiskSummary {
+    policy_version: string
+    risk_score: number
+    risk_level: string
+    legacy_verdict: string
+    malicious_gate_open: boolean
+    high_gate_open: boolean
+    independent_source_count: number
+    breakdown: RiskBreakdown
+    evidence: RiskEvidence[]
+    top_evidence: RiskEvidence[]
+    descendant_summary: Record<string, unknown>
+    score_trace?: ScoreTrace
+}
+
+export interface ArtifactTreeNode {
+    id: string
+    filename: string
+    sha256: string
+    mime?: string | null
+    size: number
+    depth: number
+    origin_path?: string | null
+    extraction_source?: string | null
+    archive_type?: string | null
+    extraction_note?: string | null
+    verdict?: string | null
+    score?: number | null
+    risk_level?: string | null
+    policy_version?: string | null
+    job_id?: string | null
+    display_path?: string | null
+    archive_layer?: number | null
+    analysis_status?: string | null
+    primary_analyzer?: string | null
+    finding_ids: string[]
+    uncertainty_ids: string[]
+    diagnostic_ids: string[]
+    top_finding_titles: string[]
+    children: ArtifactTreeNode[]
+}
+
+export interface ExplainabilitySummaryFinding {
+    finding_id: string
+    artifact_id: string
+    artifact_path: string
+    archive_layer: number
+    title: string
+    score_impact: number
+    why_flagged: string
+}
+
+export interface ExplainabilitySummary {
+    headline: string
+    primary_artifact_id?: string | null
+    primary_artifact_path?: string | null
+    top_findings: ExplainabilitySummaryFinding[]
+    final_verdict_explainer: string
+}
+
+export interface ExplainabilityFinding {
+    finding_id: string
+    artifact_id: string
+    title: string
+    summary: string
+    severity: string
+    confidence: string
+    kind: string
+    primary: boolean
+    score_impact: number
+    found_by: Array<{ stage?: string | null; analyzer?: string | null }>
+    evidence_ids: string[]
+    ioc_ids: string[]
+    decoded_ids: string[]
+    uncertainty_ids: string[]
+    timeline_event_ids: string[]
+    artifact_path?: string
+    archive_layer?: number
+}
+
+export interface ExplainabilityIoc {
+    ioc_id: string
+    artifact_id: string
+    type: string
+    value: string
+    source_stage: string
+    source_kind: string
+    decoder?: string | null
+    decoded_id?: string | null
+    first_seen_in?: string | null
+    finding_ids: string[]
+}
+
+export interface ExplainabilityDecodedString {
+    decoded_id: string
+    artifact_id: string
+    source_stage: string
+    decoder?: string | null
+    technique?: string | null
+    confidence?: number | null
+    content_preview: string
+    content_encoding?: string | null
+    content_truncated: boolean
+    provenance: Record<string, unknown>
+    ioc_ids: string[]
+    finding_ids: string[]
+}
+
+export interface ExplainabilityUncertainty {
+    uncertainty_id: string
+    artifact_id: string
+    kind: string
+    severity: string
+    direction: string
+    message: string
+    finding_ids: string[]
+}
+
+export interface ExplainabilityTimelineEvent {
+    timeline_event_id: string
+    seq: number
+    artifact_id: string
+    kind: string
+    stage?: string | null
+    analyzer?: string | null
+    status: string
+    summary: string
+    refs: {
+        finding_ids: string[]
+        evidence_ids: string[]
+        ioc_ids: string[]
+        decoded_ids: string[]
+    }
+}
+
+export interface FailureDiagnostic {
+    diagnostic_id?: string
+    artifact_id?: string
+    stage: string
+    code: string
+    category: string
+    severity: string
+    likely_effect: string
+    confidence: string
+    message: string
+    recommended_action?: string
+}
+
+export interface SuspectedMissStage {
+    artifact_id?: string
+    stage: string
+    reason: string
+    confidence: string
+}
+
+export interface FailureDiagnostics {
+    status: string
+    headline: string
+    diagnostics: FailureDiagnostic[]
+    suspected_miss_stages: SuspectedMissStage[]
+}
+
+export interface ExplainabilityBlock {
+    summary: ExplainabilitySummary
+    artifacts: Array<Record<string, unknown>>
+    findings: ExplainabilityFinding[]
+    evidence: Array<Record<string, unknown>>
+    iocs: ExplainabilityIoc[]
+    decoded_strings: ExplainabilityDecodedString[]
+    uncertainties: ExplainabilityUncertainty[]
+    timeline: ExplainabilityTimelineEvent[]
+    failure_diagnostics: FailureDiagnostics
 }
 
 export interface Report {
@@ -71,6 +300,9 @@ export interface Report {
     file: FileMetadata
     verdict: string
     score: number
+    risk_level: string
+    report_schema_version?: string
+    risk?: RiskSummary
     results: {
         av_result: AvResult
         yara_hits: YaraHit[]
@@ -90,6 +322,9 @@ export interface Report {
             reason: string | null
             extraction_failed?: boolean
         }
+        format_analysis?: Record<string, unknown>
+        deobfuscation?: Record<string, unknown>
+        document_analysis?: Record<string, unknown>
     }
     timings: {
         total_ms: number
@@ -103,6 +338,8 @@ export interface Report {
         verdict: string | null
     }>
     created_at: string
+    artifact_tree?: ArtifactTreeNode | null
+    explainability?: ExplainabilityBlock
 }
 
 export interface ApiError {

@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { apiClient, Report } from '../api/client'
+import ArtifactTreePanel from '../components/report/ArtifactTreePanel'
+import EvidenceTimelinePanel from '../components/report/EvidenceTimelinePanel'
+import FailureDiagnosticsPanel from '../components/report/FailureDiagnosticsPanel'
+import ScoreTracePanel from '../components/report/ScoreTracePanel'
+import TopFindingsSummary from '../components/report/TopFindingsSummary'
+import { localizeReportText, localizeStage, localizeVerdict } from '../components/report/reportText'
 
 export default function ReportPage() {
     const { jobId } = useParams<{ jobId: string }>()
@@ -84,7 +90,7 @@ export default function ReportPage() {
                 <div className="glass-card p-8 text-center">
                     <div className="text-4xl mb-4 animate-pulse">📋</div>
                     <p className="text-xl font-mono text-neon-cyan terminal-cursor">
-                        {isWaitingDescendants ? 'WAITING FOR DESCENDANTS' : 'LOADING REPORT'}
+                        {isWaitingDescendants ? '等待子層分析完成' : '載入分析報告中'}
                     </p>
                     {isWaitingDescendants && (
                         <p className="mt-3 text-sm text-slate-400 font-mono">
@@ -118,12 +124,15 @@ export default function ReportPage() {
     }
 
     const stageLabels: Record<string, string> = {
-        'file-type': 'FILE_TYPE_DETECT',
-        clamav: 'CLAMAV_SCAN',
-        yara: 'YARA_MATCH',
-        'ioc-extract': 'IOC_EXTRACT',
-        'archive-extract': 'ARCHIVE_EXTRACT',
-        sandbox: 'SANDBOX_ANALYZE',
+        'file-type': '檔案類型判定',
+        clamav: '防毒掃描',
+        yara: 'YARA 規則比對',
+        'ioc-extract': 'IOC 擷取',
+        'archive-extract': '封存解壓',
+        sandbox: '沙箱分析',
+        'format-analysis': '格式分析',
+        deobfuscation: '去混淆',
+        'document-analysis': '文件分析',
     }
 
     return (
@@ -154,19 +163,25 @@ export default function ReportPage() {
             <div className={`verdict-card ${verdictClasses[report.verdict]} mb-6 animate-glow-pulse`}>
                 <div className="flex items-center justify-between">
                     <div>
-                        <p className="text-sm font-mono text-slate-400 mb-1">VERDICT</p>
+                        <p className="text-sm font-mono text-slate-400 mb-1">判定結果</p>
                         <p className="text-3xl font-bold">
                             {verdictIcons[report.verdict]} {verdictLabels[report.verdict] || report.verdict}
                         </p>
                     </div>
                     <div className="text-right">
-                        <p className="text-sm font-mono text-slate-400 mb-1">THREAT SCORE</p>
+                        <p className="text-sm font-mono text-slate-400 mb-1">風險分數</p>
                         <p className="text-4xl font-bold font-mono">
                             {report.score}<span className="text-lg text-slate-400">/100</span>
                         </p>
                     </div>
                 </div>
             </div>
+
+            <TopFindingsSummary explainability={report.explainability} />
+            <ScoreTracePanel risk={report.risk} />
+            <ArtifactTreePanel tree={report.artifact_tree} />
+            <EvidenceTimelinePanel explainability={report.explainability} />
+            <FailureDiagnosticsPanel explainability={report.explainability} />
 
             {/* Archive Extraction Info (If present) */}
             {report.results.archive_extract && report.results.archive_extract.archive_type && (
@@ -179,27 +194,27 @@ export default function ReportPage() {
                     </h2>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono text-sm">
                         <div>
-                            <p className="text-slate-400 mb-1">FILES</p>
+                            <p className="text-slate-400 mb-1">檔案數量</p>
                             <p className="text-white text-lg font-bold">{report.results.archive_extract.extracted_count}</p>
                         </div>
                         <div>
-                            <p className="text-slate-400 mb-1">SUB-JOBS</p>
+                            <p className="text-slate-400 mb-1">子工作數</p>
                             <p className="text-neon-cyan text-lg font-bold">{report.results.archive_extract.sub_jobs_created}</p>
                         </div>
                         <div>
-                            <p className="text-slate-400 mb-1">UNCOMPRESSED</p>
+                            <p className="text-slate-400 mb-1">解壓後大小</p>
                             <p className="text-white text-lg font-bold">{(report.results.archive_extract.total_extracted_bytes / 1024).toFixed(1)} KB</p>
                         </div>
                         <div>
-                            <p className="text-slate-400 mb-1">DECOMPRESSION</p>
+                            <p className="text-slate-400 mb-1">解壓狀態</p>
                             <p className={report.results.archive_extract.malicious ? 'text-alert-red text-lg font-bold' : 'text-matrix-green text-lg font-bold'}>
-                                {report.results.archive_extract.malicious ? '⚠️ WARN' : '✓ OK'}
+                                {report.results.archive_extract.malicious ? '⚠️ 警示' : '✓ 正常'}
                             </p>
                         </div>
                     </div>
                     {report.results.archive_extract.reason && (
                         <p className="mt-4 text-xs text-caution-yellow italic">
-                            NOTE: {report.results.archive_extract.reason}
+                            說明：{localizeReportText(report.results.archive_extract.reason)}
                         </p>
                     )}
                 </div>
@@ -242,7 +257,7 @@ export default function ReportPage() {
                                         child.verdict === 'clean' ? 'bg-matrix-green/10 text-matrix-green border border-matrix-green/20' :
                                         'bg-slate-500/10 text-slate-400'
                                     }`}>
-                                        {(child.verdict || 'PENDING').toUpperCase()}
+                                        {localizeVerdict(child.verdict || 'pending')}
                                     </span>
                                     <span className="text-slate-600 font-mono text-xs group-hover:translate-x-1 transition-transform">→</span>
                                 </div>
@@ -257,15 +272,15 @@ export default function ReportPage() {
                 <h2 className="text-lg font-bold mb-4 text-neon-cyan">📄 檔案資訊</h2>
                 <div className="space-y-3 font-mono text-sm">
                     <div className="flex justify-between">
-                        <span className="text-slate-400">FILENAME</span>
+                        <span className="text-slate-400">檔案名稱</span>
                         <span className="text-white">{report.file.original_filename}</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-slate-400">MIME</span>
+                        <span className="text-slate-400">MIME 類型</span>
                         <span className="text-neon-purple">{report.file.mime}</span>
                     </div>
                     <div className="flex justify-between">
-                        <span className="text-slate-400">SIZE</span>
+                        <span className="text-slate-400">檔案大小</span>
                         <span className="text-white">{(report.file.size / 1024).toFixed(2)} KB</span>
                     </div>
                     <div className="pt-3 border-t border-white/10">
@@ -288,15 +303,15 @@ export default function ReportPage() {
             {/* AV Results */}
             <div className="glass-card p-6 mb-4">
                 <h2 className="text-lg font-bold mb-4 text-neon-cyan">🛡️ 防毒掃描</h2>
-                <div className="flex justify-between items-center font-mono text-sm">
-                    <span className="text-slate-400">{report.results.av_result.engine}</span>
-                    <span className={report.results.av_result.infected ? 'text-alert-red' : 'text-matrix-green'}>
-                        {report.results.av_result.infected
-                            ? `☠️ ${report.results.av_result.threat_name}`
-                            : '✓ CLEAN'}
-                    </span>
+                    <div className="flex justify-between items-center font-mono text-sm">
+                        <span className="text-slate-400">{report.results.av_result.engine}</span>
+                        <span className={report.results.av_result.infected ? 'text-alert-red' : 'text-matrix-green'}>
+                            {report.results.av_result.infected
+                                ? `☠️ ${report.results.av_result.threat_name}`
+                                : '✓ 無威脅'}
+                        </span>
+                    </div>
                 </div>
-            </div>
 
             {/* YARA Hits */}
             {report.results.yara_hits.length > 0 && (
@@ -341,7 +356,7 @@ export default function ReportPage() {
                 {report.results.iocs.urls.length > 0 && (
                     <div className="mb-4">
                         <p className="text-sm text-slate-400 mb-2 font-mono">
-                            URLs <span className="text-neon-cyan">({report.results.iocs.urls.length})</span>
+                            網址 <span className="text-neon-cyan">({report.results.iocs.urls.length})</span>
                         </p>
                         <div className="code-block">
                             {report.results.iocs.urls.map((url, i) => (
@@ -357,7 +372,7 @@ export default function ReportPage() {
                 {report.results.iocs.domains.length > 0 && (
                     <div className="mb-4">
                         <p className="text-sm text-slate-400 mb-2 font-mono">
-                            Domains <span className="text-neon-cyan">({report.results.iocs.domains.length})</span>
+                            網域 <span className="text-neon-cyan">({report.results.iocs.domains.length})</span>
                         </p>
                         <div className="code-block">
                             {report.results.iocs.domains.map((domain, i) => (
@@ -373,7 +388,7 @@ export default function ReportPage() {
                 {report.results.iocs.ips.length > 0 && (
                     <div>
                         <p className="text-sm text-slate-400 mb-2 font-mono">
-                            IPs <span className="text-neon-cyan">({report.results.iocs.ips.length})</span>
+                            IP 位址 <span className="text-neon-cyan">({report.results.iocs.ips.length})</span>
                         </p>
                         <div className="code-block">
                             {report.results.iocs.ips.map((ip, i) => (
@@ -389,7 +404,7 @@ export default function ReportPage() {
                 {report.results.iocs.urls.length === 0 &&
                     report.results.iocs.domains.length === 0 &&
                     report.results.iocs.ips.length === 0 && (
-                        <p className="text-slate-500 font-mono text-sm">NO IOC DETECTED</p>
+                        <p className="text-slate-500 font-mono text-sm">未偵測到 IOC 指標</p>
                     )}
             </div>
 
@@ -399,12 +414,12 @@ export default function ReportPage() {
                 <div className="space-y-1">
                     {report.timings.stages.map((stage, index) => (
                         <div key={index} className="stage-item font-mono text-sm">
-                            <span className="text-slate-400">{stageLabels[stage.name] || stage.name}</span>
+                            <span className="text-slate-400">{stageLabels[stage.name] || localizeStage(stage.name)}</span>
                             <span className="text-matrix-green">{stage.duration_ms} ms</span>
                         </div>
                     ))}
                     <div className="stage-item font-mono text-sm pt-2 border-t border-white/10">
-                        <span className="font-bold text-white">TOTAL</span>
+                        <span className="font-bold text-white">總計</span>
                         <span className="font-bold text-neon-cyan">{report.timings.total_ms} ms</span>
                     </div>
                 </div>
@@ -415,7 +430,7 @@ export default function ReportPage() {
                 <div className="glass-card p-6 mb-4 opacity-60">
                     <h2 className="text-lg font-bold mb-2 text-slate-400">🧪 沙箱分析 (Mock)</h2>
                     <p className="text-sm text-slate-500 font-mono">
-                        SANDBOX_MOCK: TRUE • REAL ANALYSIS AVAILABLE IN V2
+                        目前顯示為模擬結果，正式沙箱分析將於後續版本提供。
                     </p>
                 </div>
             )}

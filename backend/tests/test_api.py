@@ -415,6 +415,276 @@ def test_get_report_returns_risk_level_and_risk_block(
     assert data["risk"]["risk_score"] == 59
 
 
+def test_get_report_adds_report_schema_version_and_empty_explainability(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "sample.bin",
+        },
+        "verdict": "suspicious",
+        "score": 59,
+        "risk_level": "medium",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 59,
+            "risk_level": "medium",
+            "legacy_verdict": "suspicious",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 1,
+            "breakdown": {
+                "local_score": 59,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 59,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["report_schema_version"] == "mswr-report-v2"
+    assert data["explainability"]["summary"]["top_findings"] == []
+    assert data["explainability"]["failure_diagnostics"]["status"] in {
+        "none",
+        "degraded",
+        "blocked",
+    }
+
+
+def test_get_report_preserves_worker_authored_blocked_explainability(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "report_schema_version": "mswr-report-v2",
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/zip",
+            "size": 10,
+            "original_filename": "secret.zip",
+        },
+        "verdict": "unknown",
+        "score": 0,
+        "risk_level": "clean",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 0,
+            "risk_level": "clean",
+            "legacy_verdict": "unknown",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 0,
+            "breakdown": {
+                "local_score": 0,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 0,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+            "score_trace": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+            "archive_extract": {
+                "archive_type": None,
+                "extracted_count": 0,
+                "sub_jobs_created": 0,
+                "total_extracted_bytes": 0,
+                "reason": "連續 3 次密碼錯誤，封存檔解壓失敗。",
+                "extraction_failed": True,
+            },
+        },
+        "timings": {"total_ms": 0, "stages": []},
+        "explainability": {
+            "summary": {
+                "headline": "因密碼嘗試次數耗盡，封存內容未被分析。",
+                "primary_artifact_id": None,
+                "primary_artifact_path": None,
+                "top_findings": [],
+                "final_verdict_explainer": "此報告僅反映最外層檔案的分析結果。",
+            },
+            "artifacts": [],
+            "findings": [],
+            "evidence": [],
+            "iocs": [],
+            "decoded_strings": [],
+            "uncertainties": [],
+            "timeline": [],
+            "failure_diagnostics": {
+                "status": "blocked",
+                "headline": "內層封存內容因密碼耗盡而無法分析。",
+                "diagnostics": [
+                    {
+                        "stage": "archive-extract",
+                        "code": "password_attempts_exhausted",
+                        "category": "blocked",
+                        "severity": "high",
+                        "likely_effect": "possible_false_negative",
+                        "confidence": "high",
+                        "message": "連續 3 次密碼錯誤，封存檔解壓失敗。",
+                        "recommended_action": "請取得正確密碼後重新提交分析。",
+                    }
+                ],
+                "suspected_miss_stages": [
+                    {
+                        "stage": "archive-extract",
+                        "reason": "內層檔案未曾被解壓，因此未進入分析流程。",
+                        "confidence": "high",
+                    }
+                ],
+            },
+        },
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["explainability"]["summary"]["headline"] == "因密碼嘗試次數耗盡，封存內容未被分析。"
+    assert data["explainability"]["failure_diagnostics"]["status"] == "blocked"
+    assert (
+        data["explainability"]["failure_diagnostics"]["headline"]
+        == "內層封存內容因密碼耗盡而無法分析。"
+    )
+
+
+def test_get_report_legacy_report_without_artifact_tree_gets_synthetic_root(
+    client: TestClient, mock_db_session: AsyncMock
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "legacy.bin",
+        },
+        "verdict": "clean",
+        "score": 0,
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": False,
+                "behaviors": [],
+                "network_connections": [],
+                "is_mock": True,
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["artifact_tree"] is not None
+    assert data["artifact_tree"]["filename"] == "legacy.bin"
+    assert data["artifact_tree"]["display_path"] == "legacy.bin"
+
+
 def test_get_report_recomputes_tree_risk_when_artifact_tree_exists(
     client: TestClient, mock_db_session: AsyncMock
 ):

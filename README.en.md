@@ -524,6 +524,40 @@ The system now uses evidence-driven multi-signal risk scoring instead of the ear
 
 ---
 
+## Explainability v2 and Traditional Chinese UI
+
+The report payload now exposes an additive `mswr-report-v2` explainability contract while preserving backward compatibility for `GET /api/v1/reports/{job_id}`.
+
+### Explainability v2 highlights
+
+- Preserves top-level `verdict`, `score`, and `risk_level`
+- Preserves `risk.policy_version`, `risk.breakdown`, `risk.evidence`, `risk.top_evidence`, and `risk.descendant_summary`
+- Preserves `results.*`
+- Preserves `artifact_tree`
+- Adds `report_schema_version`
+- Adds `risk.score_trace`
+- Adds `explainability.summary`, `explainability.findings`, `explainability.iocs`, `explainability.decoded_strings`, `explainability.timeline`, and `explainability.failure_diagnostics`
+
+### Root artifact and tree-aware reporting
+
+- Every report now has a canonical root artifact
+- If legacy data is missing a root artifact, the backend synthesizes one at read time
+- The root report risk reflects the entire descendant artifact tree instead of only the outer file's local scan
+
+### Report copy and UI language
+
+- The main user-facing copy on the report page, job status page, and upload page is now Traditional Chinese
+- Backend and worker generated explainability text, including summaries, timeline events, and failure diagnostics, is also emitted in Traditional Chinese
+- This keeps API content and frontend rendering aligned instead of relying only on a frontend translation layer
+
+### Password exhaustion behavior
+
+- If an archive password is entered incorrectly 3 times, the worker emits a conservative final report with `verdict = "unknown"` and `risk_score = 0`
+- `results.archive_extract.reason` and `explainability.failure_diagnostics` explicitly describe that analysis was blocked by password exhaustion
+- These reports clearly state that only the outer file was covered, so incomplete analysis is not mistaken for a clean sample
+
+---
+
 ## API Endpoints
 
 | Method | Path | Service | Description |

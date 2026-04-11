@@ -417,3 +417,32 @@ def test_sandbox_reads_behavior_dicts_and_uses_dynamic_cap_group() -> None:
         ],
         "network_connections": [{"dst_ip": "10.0.0.5", "dst_port": 443, "protocol": "tcp"}],
     }
+
+
+def test_build_direct_evidence_preserves_artifact_and_analyzer_provenance() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "format-analysis": {
+                "analyzer": "script",
+                "heuristics": [
+                    {
+                        "key": "script.encoded_command_execution",
+                        "category": "script_token",
+                        "scope": "script",
+                        "role": "gate_signal",
+                        "severity": "high",
+                        "confidence": 0.9,
+                        "summary": "Encoded payload and execution primitives appear together",
+                        "evidence": {"exec_operations": ["powershell", "iex"]},
+                    }
+                ],
+            }
+        },
+    )
+
+    record = next(item for item in records if item.kind == "script.encoded_command_execution")
+
+    assert record.artifact_id == "artifact-1"
+    assert record.stage == "format-analysis"
+    assert record.analyzer == "script"

@@ -19,6 +19,7 @@ from malscan.db import get_db, get_session_factory
 from malscan.models import File, Job, JobStatus
 from malscan.models.artifact import Artifact
 from malscan.queue import publish_job
+from malscan.report_explainability import build_explainability, ensure_artifact_tree_root
 from malscan.schemas.requests import (
     JobStatusResponse,
     PasswordSubmitRequest,
@@ -105,6 +106,7 @@ def _ensure_report_risk_shape(report: dict[str, Any]) -> dict[str, Any]:
         risk["evidence"] = _normalize_risk_collection(risk.get("evidence"))
         risk["top_evidence"] = _normalize_risk_collection(risk.get("top_evidence"))
         risk["descendant_summary"] = _normalize_risk_mapping(risk.get("descendant_summary"))
+        risk["score_trace"] = _normalize_risk_mapping(risk.get("score_trace"))
         report["risk_level"] = risk_level
         report["risk"] = risk
         return report
@@ -129,8 +131,69 @@ def _ensure_report_risk_shape(report: dict[str, Any]) -> dict[str, Any]:
         "evidence": [],
         "top_evidence": [],
         "descendant_summary": {},
+        "score_trace": {},
     }
     return report
+
+
+def _empty_explainability() -> dict[str, Any]:
+    return {
+        "summary": {
+            "headline": "",
+            "primary_artifact_id": None,
+            "primary_artifact_path": None,
+            "top_findings": [],
+            "final_verdict_explainer": "",
+        },
+        "artifacts": [],
+        "findings": [],
+        "evidence": [],
+        "iocs": [],
+        "decoded_strings": [],
+        "uncertainties": [],
+        "timeline": [],
+        "failure_diagnostics": {
+            "status": "none",
+            "headline": "",
+            "diagnostics": [],
+            "suspected_miss_stages": [],
+        },
+    }
+
+
+def _ensure_report_explainability_shape(report: dict[str, Any]) -> dict[str, Any]:
+    report["report_schema_version"] = str(report.get("report_schema_version") or "mswr-report-v2")
+    if not isinstance(report.get("explainability"), dict):
+        report["explainability"] = _empty_explainability()
+    else:
+        explainability = report["explainability"]
+        empty = _empty_explainability()
+        for key, value in empty.items():
+            if key not in explainability or not isinstance(explainability.get(key), type(value)):
+                explainability[key] = value
+        summary = explainability.get("summary")
+        if isinstance(summary, dict):
+            for key, value in empty["summary"].items():
+                summary.setdefault(key, value)
+        failure = explainability.get("failure_diagnostics")
+        if isinstance(failure, dict):
+            for key, value in empty["failure_diagnostics"].items():
+                failure.setdefault(key, value)
+    return report
+
+
+def _should_preserve_stored_explainability(report: dict[str, Any]) -> bool:
+    explainability = report.get("explainability")
+    if not isinstance(explainability, dict):
+        return False
+    failure = explainability.get("failure_diagnostics")
+    if not isinstance(failure, dict):
+        return False
+    return str(failure.get("status") or "") == "blocked"
+
+
+def _synthesize_root_artifact_tree(report: dict[str, Any]) -> dict[str, Any]:
+    return ensure_artifact_tree_root(report, None)
 
 
 def _artifact_level(node: dict[str, Any]) -> str:
@@ -834,6 +897,7 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     # Return stored result with created_at and child_jobs
     report = dict(job.result)
     report = _ensure_report_risk_shape(report)
+    report = _ensure_report_explainability_shape(report)
     report["created_at"] = job.created_at.isoformat()
     report["parent_job_id"] = str(job.parent_job_id) if job.parent_job_id else None
     report["child_jobs"] = child_jobs
@@ -841,5 +905,23 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     # Build artifact tree (returns None for non-archive files)
     report["artifact_tree"] = await _build_artifact_tree(str(job.id), db)
     report = _apply_tree_risk_rollup(report, report["artifact_tree"])
+    report["artifact_tree"] = ensure_artifact_tree_root(report, report["artifact_tree"])
+    synthesized_explainability = build_explainability(
+        report=report,
+        artifact_tree=report["artifact_tree"],
+    )
+    if _should_preserve_stored_explainability(report):
+        report_explainability = report.get("explainability")
+        if isinstance(report_explainability, dict):
+            synthesized_explainability["summary"] = report_explainability.get(
+                "summary", synthesized_explainability["summary"]
+            )
+            synthesized_explainability["failure_diagnostics"] = report_explainability.get(
+                "failure_diagnostics", synthesized_explainability["failure_diagnostics"]
+            )
+            synthesized_explainability["timeline"] = report_explainability.get(
+                "timeline", synthesized_explainability["timeline"]
+            )
+    report["explainability"] = synthesized_explainability
 
     return report

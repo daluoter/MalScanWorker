@@ -70,11 +70,14 @@ export default function JobStatusPage() {
     }, [job])
 
     const stageLabels: Record<string, string> = {
-        'file-type': 'FILE_TYPE_DETECT',
-        clamav: 'CLAMAV_SCAN',
-        yara: 'YARA_MATCH',
-        'ioc-extract': 'IOC_EXTRACT',
-        sandbox: 'SANDBOX_ANALYZE',
+        'file-type': '檔案類型偵測',
+        clamav: 'ClamAV 掃描',
+        yara: 'YARA 規則比對',
+        'ioc-extract': 'IOC 擷取',
+        sandbox: '沙箱分析',
+        'format-analysis': '格式分析',
+        'archive-extract': '封存解壓',
+        deobfuscation: '去混淆分析',
     }
 
     if (error) {
@@ -99,7 +102,7 @@ export default function JobStatusPage() {
                 <div className="glass-card p-8 text-center">
                     <div className="text-4xl mb-4 animate-pulse">⏳</div>
                     <p className="text-xl font-mono text-neon-cyan terminal-cursor">
-                        LOADING
+                        載入中
                     </p>
                 </div>
             </div>
@@ -140,7 +143,7 @@ export default function JobStatusPage() {
                     {fileInfo.fileName && (
                         <div className="flex items-start gap-2">
                             <span className="text-neon-purple">$</span>
-                            <span className="text-slate-400">FILE:</span>
+                            <span className="text-slate-400">檔案：</span>
                             <span className="text-white">{fileInfo.fileName}</span>
                             {fileInfo.fileSize && (
                                 <span className="text-slate-500">
@@ -151,12 +154,12 @@ export default function JobStatusPage() {
                     )}
                     <div className="flex items-start gap-2">
                         <span className="text-neon-purple">$</span>
-                        <span className="text-slate-400">JOB_ID:</span>
+                        <span className="text-slate-400">工作 ID：</span>
                         <span className="text-neon-cyan break-all">{job.job_id}</span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-neon-purple">$</span>
-                        <span className="text-slate-400">STATUS:</span>
+                        <span className="text-slate-400">狀態：</span>
                         <span className={`font-bold ${STATUS_COLORS[job.status]}`}>
                             {STATUS_LABELS[job.status] || job.status}
                         </span>
@@ -177,7 +180,7 @@ export default function JobStatusPage() {
                 {/* HUD Progress Bar */}
                 <div className="mt-6">
                     <div className="flex justify-between items-center mb-2">
-                        <span className="text-sm text-slate-400 font-mono">PROGRESS</span>
+                        <span className="text-sm text-slate-400 font-mono">進度</span>
                         <span className="text-sm font-mono text-neon-cyan">
                             {job.progress.percent}%
                         </span>
@@ -196,7 +199,7 @@ export default function JobStatusPage() {
                     <div className="mt-6 p-4 bg-deep-space rounded-lg border border-neon-cyan/20">
                         <div className="flex items-center gap-2 font-mono text-sm">
                             <span className="text-neon-cyan animate-pulse">▶</span>
-                            <span className="text-matrix-green">EXECUTING:</span>
+                            <span className="text-matrix-green">執行中：</span>
                             <span className="text-white">
                                 {stageLabels[job.progress.current_stage] || job.progress.current_stage}
                             </span>
@@ -212,14 +215,14 @@ export default function JobStatusPage() {
                     <span className="text-slate-500">/</span>
                     <span className="text-white">{job.progress.stages_total}</span>
                     <span className="text-neon-purple">]</span>
-                    <span className="ml-2">STAGES COMPLETED</span>
+                    <span className="ml-2">已完成階段</span>
                 </div>
 
                 {/* Error Display */}
                 {job.status === 'failed' && job.error_message && (
                     <div className="mt-6 p-4 rounded-lg bg-alert-red/10 border border-alert-red">
                         <div className="font-mono text-sm">
-                            <span className="text-alert-red">ERROR:</span>
+                            <span className="text-alert-red">錯誤：</span>
                             <span className="text-white ml-2">{job.error_message}</span>
                         </div>
                     </div>

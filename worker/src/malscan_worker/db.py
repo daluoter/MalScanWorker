@@ -328,6 +328,34 @@ async def create_artifact(
             raise
 
 
+async def ensure_root_artifact(
+    *,
+    job_id: str,
+    root_job_id: str,
+    sha256: str,
+    size: int,
+    original_filename: str,
+    existing_artifact_id: str | None,
+) -> dict[str, str]:
+    """Ensure every job has a canonical root artifact reference."""
+    if existing_artifact_id:
+        return {"id": existing_artifact_id, "root_id": existing_artifact_id}
+
+    record = await create_artifact(
+        parent_id=None,
+        root_id=None,
+        depth=0,
+        sha256=sha256,
+        size=size,
+        original_filename=original_filename,
+        extraction_source="upload",
+        archive_type=None,
+        job_id=job_id,
+        root_job_id=root_job_id,
+    )
+    return {"id": record["id"], "root_id": record["id"]}
+
+
 async def update_artifact_risk(
     artifact_id: str,
     verdict: str,

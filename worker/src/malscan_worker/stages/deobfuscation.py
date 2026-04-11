@@ -36,6 +36,7 @@ class CandidateProvenanceFinding(TypedDict):
 
 
 class DeobfuscationCandidateFinding(TypedDict):
+    decoded_id: str
     content: str
     content_encoding: Literal["utf-8", "base64"]
     content_byte_length: int
@@ -45,6 +46,7 @@ class DeobfuscationCandidateFinding(TypedDict):
     technique: str
     truncated: bool
     tags: list[str]
+    source_stage: str
     provenance: CandidateProvenanceFinding
 
 
@@ -122,8 +124,13 @@ class DeobfuscationStage(Stage):
                 max_candidate_bytes = 0
 
             candidate_findings = [
-                self._candidate_to_dict(candidate, max_candidate_bytes=max_candidate_bytes)
-                for candidate in engine_result.candidates
+                self._candidate_to_dict(
+                    candidate,
+                    artifact_ref=ctx.artifact_id or ctx.root_artifact_id or ctx.job_id,
+                    index=index,
+                    max_candidate_bytes=max_candidate_bytes,
+                )
+                for index, candidate in enumerate(engine_result.candidates)
             ]
 
             findings = {
@@ -185,9 +192,13 @@ class DeobfuscationStage(Stage):
     def _candidate_to_dict(
         candidate: DeobfuscationCandidate,
         *,
+        artifact_ref: str,
+        index: int,
         max_candidate_bytes: int,
     ) -> DeobfuscationCandidateFinding:
         candidate_dict = asdict(candidate)
+        candidate_dict["decoded_id"] = f"decoded::{artifact_ref}::{index + 1}"
+        candidate_dict["source_stage"] = "deobfuscation"
         original_length = len(candidate.content)
         serialized_bytes = candidate.content[:max_candidate_bytes]
         candidate_dict["content_byte_length"] = original_length

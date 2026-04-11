@@ -95,6 +95,97 @@ def extract_raw_iocs(
     }
 
 
+def extract_raw_ioc_items(
+    content: bytes,
+    *,
+    artifact_ref: str,
+    max_urls: int = 100,
+    max_domains: int = 100,
+    max_ips: int = 50,
+) -> list[dict[str, str | int | None]]:
+    """Return structured IOC records with stable IDs and offsets."""
+
+    items: list[dict[str, str | int | None]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for index, match in enumerate(URL_PATTERN.finditer(content)):
+        if index >= max_urls:
+            break
+        value = match.group().decode("utf-8", errors="ignore")
+        key = ("url", value)
+        if key in seen:
+            continue
+        seen.add(key)
+        url_index = len([item for item in items if item["type"] == "url"]) + 1
+        items.append(
+            {
+                "ioc_id": f"ioc::{artifact_ref}::url::{url_index}",
+                "type": "url",
+                "value": value,
+                "offset": match.start(),
+                "source_stage": "ioc-extract",
+                "source_kind": "raw_regex",
+            }
+        )
+
+    url_domains = {
+        item["value"].split("/")[2].lower()
+        for item in items
+        if item["type"] == "url" and isinstance(item["value"], str) and "/" in item["value"]
+    }
+
+    for match in DOMAIN_PATTERN.finditer(content):
+        if len([item for item in items if item["type"] == "domain"]) >= max_domains:
+            break
+        value = match.group().decode("utf-8", errors="ignore").lower()
+        if (
+            value in _COMMON_DOMAINS
+            or value in url_domains
+            or len(value) < 4
+            or "." not in value[1:-1]
+        ):
+            continue
+        key = ("domain", value)
+        if key in seen:
+            continue
+        seen.add(key)
+        domain_index = len([item for item in items if item["type"] == "domain"]) + 1
+        items.append(
+            {
+                "ioc_id": f"ioc::{artifact_ref}::domain::{domain_index}",
+                "type": "domain",
+                "value": value,
+                "offset": match.start(),
+                "source_stage": "ioc-extract",
+                "source_kind": "raw_regex",
+            }
+        )
+
+    for match in IP_PATTERN.finditer(content):
+        if len([item for item in items if item["type"] == "ip"]) >= max_ips:
+            break
+        value = match.group().decode("utf-8", errors="ignore")
+        if not _is_public_ip(value):
+            continue
+        key = ("ip", value)
+        if key in seen:
+            continue
+        seen.add(key)
+        ip_index = len([item for item in items if item["type"] == "ip"]) + 1
+        items.append(
+            {
+                "ioc_id": f"ioc::{artifact_ref}::ip::{ip_index}",
+                "type": "ip",
+                "value": value,
+                "offset": match.start(),
+                "source_stage": "ioc-extract",
+                "source_kind": "raw_regex",
+            }
+        )
+
+    return items
+
+
 class IocExtractStage(Stage):
     """Extract IOCs (URLs, domains, IPs, hashes) from file."""
 
@@ -116,6 +207,8 @@ class IocExtractStage(Stage):
             urls = extracted_iocs["urls"]
             domains = extracted_iocs["domains"]
             ips = extracted_iocs["ips"]
+            artifact_ref = ctx.artifact_id or ctx.root_artifact_id or ctx.job_id
+            ioc_items = extract_raw_ioc_items(content, artifact_ref=artifact_ref)
 
             # Calculate file hashes
             md5_hash = hashlib.md5(content).hexdigest()
@@ -181,6 +274,7 @@ class IocExtractStage(Stage):
                         "sha1": sha1_hash,
                         "sha256": sha256_hash,
                     },
+                    "ioc_items": ioc_items,
                     "sub_jobs_created": sub_jobs_created,
                 },
                 artifacts=[],

@@ -181,7 +181,7 @@ export default function UploadPage() {
             {/* Footer */}
             <div className="mt-8 text-center">
                 <p className="text-slate-500 text-xs font-mono">
-                    MALSCAN v0.1.0 • CYBERSEC ANALYSIS PLATFORM
+                    MALSCAN v0.1.0 • 惡意附件分析平台
                 </p>
             </div>
         </div>

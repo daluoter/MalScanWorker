@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
+from malscan.scoring.policy import POLICY_VERSION
 from malscan_worker.stages.base import Stage, StageResult
 
 
@@ -69,6 +70,11 @@ async def test_run_pipeline_success(mocker, tmp_path):
         new_callable=AsyncMock,
         return_value=None,
     )
+    mocker.patch(
+        "malscan_worker.pipeline.ensure_root_artifact",
+        new_callable=AsyncMock,
+        return_value={"id": "artifact-root-1", "root_id": "artifact-root-1"},
+    )
     mocker.patch("malscan_worker.pipeline.stage_latency")
 
     # Replace STAGES with mock stages
@@ -123,6 +129,11 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
         new_callable=AsyncMock,
         return_value=None,
     )
+    mocker.patch(
+        "malscan_worker.pipeline.ensure_root_artifact",
+        new_callable=AsyncMock,
+        return_value={"id": "artifact-root-1", "root_id": "artifact-root-1"},
+    )
     mocker.patch("malscan_worker.pipeline.stage_latency")
 
     # Mock STAGES (second stage fails)
@@ -148,6 +159,59 @@ async def test_run_pipeline_stage_failure(mocker, tmp_path):
         stage["stage_name"] == "stage2" and stage["status"] == "failed"
         for stage in result["stages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_sets_root_artifact_context_before_stage_execution(mocker, tmp_path):
+    from malscan_worker.pipeline import run_pipeline
+
+    captured: dict[str, str | None] = {}
+
+    class CaptureStage(MockStage):
+        async def execute(self, ctx):
+            captured["artifact_id"] = ctx.artifact_id
+            captured["root_artifact_id"] = ctx.root_artifact_id
+            return await super().execute(ctx)
+
+    test_file = tmp_path / "test.txt"
+    test_file.write_bytes(b"test content")
+
+    mocker.patch(
+        "malscan_worker.pipeline.download_file",
+        new_callable=AsyncMock,
+        return_value=test_file,
+    )
+    mocker.patch("malscan_worker.pipeline.update_job_status", new_callable=AsyncMock)
+    mocker.patch("malscan_worker.pipeline.update_job_stage", new_callable=AsyncMock)
+    mocker.patch("malscan_worker.pipeline.update_job_result", new_callable=AsyncMock)
+    mocker.patch(
+        "malscan_worker.pipeline.get_job_for_context",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    ensure_root_artifact = mocker.patch(
+        "malscan_worker.pipeline.ensure_root_artifact",
+        new_callable=AsyncMock,
+        return_value={"id": "artifact-root-1", "root_id": "artifact-root-1"},
+    )
+    mocker.patch("malscan_worker.pipeline.stage_latency")
+    mocker.patch("malscan_worker.pipeline.PARALLEL_STAGES", [CaptureStage("stage1")])
+    mocker.patch("malscan_worker.pipeline.FORMAT_ANALYSIS_STAGE", MockStage("format-analysis"))
+    mocker.patch("malscan_worker.pipeline.SEQUENTIAL_STAGES", [])
+
+    await run_pipeline(
+        {
+            "job_id": str(uuid.uuid4()),
+            "file_id": str(uuid.uuid4()),
+            "storage_key": "test-key",
+            "sha256": "test-sha256",
+            "original_filename": "test.txt",
+        }
+    )
+
+    ensure_root_artifact.assert_awaited_once()
+    assert captured["artifact_id"] == "artifact-root-1"
+    assert captured["root_artifact_id"] == "artifact-root-1"
 
 
 def test_build_analysis_result_applies_format_scoring_and_reporting():
@@ -262,3 +326,52 @@ def test_build_analysis_result_applies_format_scoring_and_reporting():
     archive_report = report["results"]["archive_extract"]
     assert archive_report["archive_type"] == "zip"
     assert archive_report["heuristics"][0]["key"] == "archive.executable_concentration"
+
+
+def test_build_analysis_result_adds_score_trace_and_report_version():
+    from malscan_worker.pipeline import _build_analysis_result
+
+    now = datetime.now(timezone.utc)
+    ctx = type(
+        "Ctx",
+        (),
+        {
+            "sha256": "abc123",
+            "original_filename": "sample.bin",
+            "artifact_id": "artifact-1",
+            "root_artifact_id": "artifact-1",
+        },
+    )()
+    results = [
+        StageResult(
+            stage_name="file-type",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={"mime_type": "application/octet-stream", "file_size": 10},
+            artifacts=[],
+        ),
+        StageResult(
+            stage_name="clamav",
+            status="ok",
+            started_at=now,
+            ended_at=now,
+            duration_ms=1,
+            findings={"infected": True, "threat_name": "Win.Test.EICAR_HDB-1"},
+            artifacts=[],
+        ),
+    ]
+
+    report = _build_analysis_result("job-1", "file-1", ctx, results, 123)
+
+    assert report["report_schema_version"] == "mswr-report-v2"
+    assert report["risk"]["policy_version"] == POLICY_VERSION
+    assert report["risk"]["score_trace"]["components"][0]["type"] == "evidence"
+    evidence = report["risk"]["evidence"][0]
+    assert evidence["id"] == "ev-1"
+    assert evidence["artifact_id"] == "artifact-1"
+    assert evidence["stage"] is None
+    assert evidence["analyzer"] is None
+    assert evidence["confidence"] == 1.0
+    assert evidence["score_contribution"] == {}

@@ -5,6 +5,7 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from malscan_worker.db import ensure_root_artifact
 from malscan_worker.stages.base import StageContext
 
 
@@ -78,3 +79,17 @@ class TestArtifactTreeCreation:
         """Same SHA256 twice in one archive: 2 artifacts, 1 sub-job."""
         # This is tested at integration level in test_safety_limits.py
         pass
+
+
+@pytest.mark.asyncio
+async def test_ensure_root_artifact_returns_existing_artifact_without_db_write():
+    result = await ensure_root_artifact(
+        job_id=str(uuid.uuid4()),
+        root_job_id=str(uuid.uuid4()),
+        sha256="a" * 64,
+        size=123,
+        original_filename="sample.bin",
+        existing_artifact_id="artifact-1",
+    )
+
+    assert result == {"id": "artifact-1", "root_id": "artifact-1"}

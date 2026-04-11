@@ -26,6 +26,7 @@ def _resolve_risk_level(score: int) -> str:
 def score_direct_evidence(*, direct_evidence: list[EvidenceRecord]) -> RiskDecision:
     ordered = sorted(direct_evidence, key=lambda ev: ev.points, reverse=True)
     scored_evidence: list[EvidenceRecord] = []
+    components: list[dict[str, object]] = []
     local_score = 0
     synergy_bonus = 0
     weak_only = True
@@ -61,6 +62,20 @@ def score_direct_evidence(*, direct_evidence: list[EvidenceRecord]) -> RiskDecis
 
         cap_totals[ev.cap_group] += effective_points
         local_score += effective_points
+        contribution_reason = ev.reason
+        if limit is not None and effective_points < ev.points:
+            contribution_reason = f"{ev.cap_group} cap limited the direct contribution"
+        components.append(
+            {
+                "type": "evidence",
+                "artifact_id": ev.artifact_id,
+                "evidence_id": ev.evidence_id,
+                "label": ev.kind,
+                "base_points": ev.points,
+                "applied_points": effective_points,
+                "reason": contribution_reason,
+            }
+        )
 
     if len(strong_sources) >= 2:
         synergy_bonus += 10
@@ -112,4 +127,32 @@ def score_direct_evidence(*, direct_evidence: list[EvidenceRecord]) -> RiskDecis
         top_evidence=ordered[:10],
         breakdown=breakdown,
         policy_version=POLICY_VERSION,
+        score_trace={
+            "formula": (
+                "final = local + inherited + synergy - dampener, " "then apply gate caps and bounds"
+            ),
+            "components": components,
+            "gates": {
+                "high_gate_open": high_gate_open,
+                "malicious_gate_open": malicious_gate_open,
+                "capped_by": (
+                    "weak_only"
+                    if weak_only
+                    else "no_high_gate"
+                    if not high_gate_open
+                    else "no_malicious_gate"
+                    if not malicious_gate_open
+                    else "pure_deob"
+                    if non_benign_sources == {"deobfuscation"}
+                    else None
+                ),
+            },
+            "breakdown": {
+                "local_score": local_score,
+                "inherited_score": 0,
+                "synergy_bonus": synergy_bonus,
+                "dampener": 0,
+                "final_score": score,
+            },
+        },
     )
