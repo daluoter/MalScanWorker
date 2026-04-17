@@ -32,14 +32,14 @@ def test_job_model_creation():
         id=job_id,
         file_id=file_id,
         status=JobStatus.QUEUED.value,
-        stages_total=5,
+        stages_total=9,
         stages_done=0,  # Explicitly set default
     )
 
     assert job.id == job_id
     assert job.file_id == file_id
     assert job.status == "queued"
-    assert job.stages_total == 5
+    assert job.stages_total == 9
     assert job.stages_done == 0
     assert job.current_stage is None
     assert Job.__table__.c.password_attempts.default.arg == 0

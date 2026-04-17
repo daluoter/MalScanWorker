@@ -182,6 +182,58 @@ def _ensure_report_explainability_shape(report: dict[str, Any]) -> dict[str, Any
     return report
 
 
+def _empty_sandbox_result() -> dict[str, Any]:
+    return {
+        "executed": False,
+        "provider": None,
+        "task_id": None,
+        "is_mock": False,
+        "verdict_hint": None,
+        "behaviors": [],
+        "network_connections": [],
+        "processes": [],
+        "files": [],
+        "registry": [],
+        "mutexes": [],
+        "dns": [],
+        "http": [],
+        "tcp_udp": [],
+        "dropped_files": [],
+        "screenshots": [],
+        "pcap": {"available": False, "url": None},
+        "memory_dump": {"available": False, "url": None},
+        "iocs": {"domains": [], "ips": [], "urls": []},
+        "errors": [],
+        "raw_report_ref": None,
+    }
+
+
+def _ensure_report_results_shape(report: dict[str, Any]) -> dict[str, Any]:
+    results = report.get("results")
+    if not isinstance(results, dict):
+        report["results"] = {"sandbox": _empty_sandbox_result()}
+        return report
+
+    sandbox = results.get("sandbox")
+    empty = _empty_sandbox_result()
+    if not isinstance(sandbox, dict):
+        results["sandbox"] = empty
+        return report
+
+    for key, value in empty.items():
+        if key not in sandbox:
+            sandbox[key] = value
+
+    network_connections = sandbox.get("network_connections")
+    tcp_udp = sandbox.get("tcp_udp")
+    if not isinstance(network_connections, list) and isinstance(tcp_udp, list):
+        sandbox["network_connections"] = list(sandbox["tcp_udp"])
+    if not isinstance(sandbox.get("tcp_udp"), list):
+        sandbox["tcp_udp"] = list(sandbox.get("network_connections") or [])
+
+    return report
+
+
 def _should_preserve_stored_explainability(report: dict[str, Any]) -> bool:
     explainability = report.get("explainability")
     if not isinstance(explainability, dict):
@@ -897,6 +949,7 @@ async def get_report(job_id: str, db: AsyncSession = Depends(get_db)) -> dict[st
     # Return stored result with created_at and child_jobs
     report = dict(job.result)
     report = _ensure_report_risk_shape(report)
+    report = _ensure_report_results_shape(report)
     report = _ensure_report_explainability_shape(report)
     report["created_at"] = job.created_at.isoformat()
     report["parent_job_id"] = str(job.parent_job_id) if job.parent_job_id else None

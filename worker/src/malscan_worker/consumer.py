@@ -23,7 +23,7 @@ from malscan_worker.db import (
 )
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.metrics import job_total, worker_active_jobs
-from malscan_worker.pipeline import run_pipeline
+from malscan_worker.pipeline import finalize_deferred_sandbox_job, run_pipeline
 from malscan_worker.reporting import build_password_attempts_exhausted_report
 
 log = structlog.get_logger()
@@ -104,8 +104,10 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
 
         try:
             # Run the analysis pipeline
-            await run_pipeline(body)
-            job_total.labels(status="done").inc()
+            pipeline_result = await run_pipeline(body)
+            final_status = str(pipeline_result.get("status") or "done")
+            if final_status == "done":
+                job_total.labels(status="done").inc()
 
             # Acknowledge successful processing
             await message.ack()
@@ -217,6 +219,65 @@ async def process_message(message: aio_pika.abc.AbstractIncomingMessage) -> None
         await message.reject(requeue=False)
 
 
+async def process_sandbox_message(message: aio_pika.abc.AbstractIncomingMessage) -> None:
+    """Process a deferred sandbox job message with retry tracking."""
+    job_id = None
+    file_id = None
+    retry_count = _get_retry_count(message)
+
+    try:
+        body = json.loads(message.body.decode())
+        job_id = body.get("job_id")
+        file_id = body.get("file_id")
+
+        log.info(
+            "sandbox_job_received",
+            job_id=job_id,
+            file_id=file_id,
+            retry_count=retry_count,
+        )
+
+        worker_active_jobs.inc()
+        job_total.labels(status="scanning").inc()
+
+        if job_id:
+            await update_job_status(
+                job_id,
+                "scanning",
+                current_stage="sandbox",
+                stages_done=settings.stages_total - 1,
+            )
+
+        try:
+            await finalize_deferred_sandbox_job(body)
+            job_total.labels(status="done").inc()
+            await message.ack()
+        except Exception as e:
+            log.error(
+                "sandbox_job_failed",
+                job_id=job_id,
+                file_id=file_id,
+                error=str(e),
+                retry_count=retry_count,
+            )
+            job_total.labels(status="failed").inc()
+            if retry_count < MAX_MESSAGE_RETRIES:
+                await message.reject(requeue=True)
+            else:
+                if job_id:
+                    await update_job_status(
+                        job_id,
+                        "failed",
+                        error_message=f"Sandbox max retries exceeded: {e}",
+                    )
+                await message.reject(requeue=False)
+        finally:
+            worker_active_jobs.dec()
+    except json.JSONDecodeError as e:
+        log.error("invalid_sandbox_message_format", error=str(e))
+        await message.reject(requeue=False)
+
+
 @retry(
     stop=stop_after_attempt(MAX_CONNECTION_RETRIES),
     wait=wait_fixed(RETRY_DELAY),
@@ -284,3 +345,45 @@ async def start_consumer(shutdown_event: asyncio.Event) -> None:
                 await process_message(message)
 
     log.info("consumer_stopped")
+
+
+async def start_sandbox_consumer(shutdown_event: asyncio.Event) -> None:
+    """Start consuming deferred sandbox messages."""
+    connection = await connect_with_retry()
+
+    async with connection:
+        channel = await connection.channel()
+        await channel.set_qos(prefetch_count=1)
+
+        _ = await channel.declare_queue(DLQ_QUEUE, durable=True)
+
+        try:
+            queue = await channel.declare_queue(
+                settings.rabbitmq_sandbox_queue,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": "",
+                    "x-dead-letter-routing-key": DLQ_QUEUE,
+                },
+            )
+        except aio_pika.exceptions.ChannelPreconditionFailed:
+            log.warning(
+                "sandbox_queue_dlq_config_skipped",
+                queue=settings.rabbitmq_sandbox_queue,
+                reason="queue_already_exists_with_different_arguments",
+            )
+            queue = await channel.declare_queue(
+                settings.rabbitmq_sandbox_queue,
+                durable=True,
+                passive=True,
+            )
+
+        log.info("sandbox_consumer_started", queue=settings.rabbitmq_sandbox_queue, dlq=DLQ_QUEUE)
+
+        async with queue.iterator() as queue_iter:
+            async for message in queue_iter:
+                if shutdown_event.is_set():
+                    break
+                await process_sandbox_message(message)
+
+    log.info("sandbox_consumer_stopped")

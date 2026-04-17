@@ -75,6 +75,7 @@ export default function JobStatusPage() {
         yara: 'YARA 規則比對',
         'ioc-extract': 'IOC 擷取',
         sandbox: '沙箱分析',
+        sandbox_pending: '等待沙箱結果',
         'format-analysis': '格式分析',
         'archive-extract': '封存解壓',
         deobfuscation: '去混淆分析',

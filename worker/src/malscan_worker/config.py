@@ -22,10 +22,11 @@ class Settings(BaseSettings):
     # RabbitMQ (required - no default to enforce security)
     rabbitmq_url: str
     rabbitmq_queue: str = "malscan.jobs"
+    rabbitmq_sandbox_queue: str = "malscan.jobs.sandbox"
 
     # Stage configuration
     stage_timeout_seconds: int = 300
-    stages_total: int = 8
+    stages_total: int = 9
 
     # Deobfuscation
     deobfuscation_enabled: bool = True
@@ -55,6 +56,12 @@ class Settings(BaseSettings):
     # Sandbox
     sandbox_enabled: bool = True
     sandbox_mock: bool = True
+    sandbox_provider: str = "mock"
+    sandbox_base_url: str = ""
+    sandbox_api_token: str | None = None
+    sandbox_timeout_seconds: int = 900
+    sandbox_poll_interval_seconds: int = 10
+    sandbox_enable_url_submission: bool = False
 
     # Metrics
     metrics_port: int = 9090
@@ -71,4 +78,4 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    return Settings()  # type: ignore[call-arg]

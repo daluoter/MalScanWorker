@@ -388,12 +388,6 @@ def test_get_report_returns_risk_level_and_risk_block(
                 "ips": [],
                 "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
             },
-            "sandbox": {
-                "executed": False,
-                "behaviors": [],
-                "network_connections": [],
-                "is_mock": True,
-            },
         },
         "timings": {"total_ms": 100, "stages": []},
     }
@@ -413,6 +407,107 @@ def test_get_report_returns_risk_level_and_risk_block(
     data = response.json()
     assert data["risk_level"] == "medium"
     assert data["risk"]["risk_score"] == 59
+
+
+def test_get_report_preserves_additive_sandbox_shape(
+    client: TestClient,
+    mock_db_session: AsyncMock,
+):
+    job_id = uuid.uuid4()
+
+    mock_job = MagicMock()
+    mock_job.id = job_id
+    mock_job.parent_job_id = None
+    mock_job.status = JobStatus.DONE.value
+    mock_job.sub_jobs = []
+    mock_job.result = {
+        "job_id": str(job_id),
+        "file": {
+            "file_id": "file-1",
+            "sha256": "abc123",
+            "mime": "application/octet-stream",
+            "size": 10,
+            "original_filename": "sample.bin",
+        },
+        "verdict": "suspicious",
+        "score": 59,
+        "risk_level": "medium",
+        "risk": {
+            "policy_version": "msrs-v1",
+            "risk_score": 59,
+            "risk_level": "medium",
+            "legacy_verdict": "suspicious",
+            "malicious_gate_open": False,
+            "high_gate_open": False,
+            "independent_source_count": 1,
+            "breakdown": {
+                "local_score": 59,
+                "inherited_score": 0,
+                "synergy_bonus": 0,
+                "dampener": 0,
+                "final_score": 59,
+            },
+            "evidence": [],
+            "top_evidence": [],
+            "descendant_summary": {},
+        },
+        "results": {
+            "av_result": {"engine": "clamav", "infected": False, "threat_name": None},
+            "yara_hits": [],
+            "iocs": {
+                "urls": [],
+                "domains": [],
+                "ips": [],
+                "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
+            },
+            "sandbox": {
+                "executed": True,
+                "provider": "capev2",
+                "task_id": "42",
+                "is_mock": False,
+                "verdict_hint": "malicious",
+                "behaviors": [{"type": "process_injection"}],
+                "network_connections": [{"dst_ip": "8.8.8.8", "dst_port": 443, "protocol": "tcp"}],
+                "processes": [{"pid": 100, "name": "sample.exe"}],
+                "files": [{"path": "C:\\temp\\dropper.dll", "action": "write"}],
+                "registry": [{"key": "HKCU\\Run", "action": "modify"}],
+                "mutexes": [{"name": "Global\\abc123"}],
+                "dns": [{"query": "evil.example", "answers": ["8.8.8.8"]}],
+                "http": [{"url": "http://evil.example/payload", "method": "GET"}],
+                "tcp_udp": [{"dst_ip": "8.8.8.8", "dst_port": 443, "protocol": "tcp"}],
+                "dropped_files": [{"name": "dropper.dll", "sha256": "abc123"}],
+                "screenshots": [{"name": "0001.jpg", "url": "https://cape.local/shot/1"}],
+                "pcap": {"available": True, "url": "https://cape.local/pcap/42"},
+                "memory_dump": {"available": False, "url": None},
+                "iocs": {"domains": ["evil.example"], "ips": ["8.8.8.8"], "urls": []},
+                "errors": [],
+                "raw_report_ref": "https://cape.local/apiv2/tasks/report/42/?format=json",
+            },
+        },
+        "timings": {"total_ms": 100, "stages": []},
+    }
+    mock_job.created_at.isoformat.return_value = "2023-01-01T00:00:00Z"
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_job
+    mock_pending_result = MagicMock()
+    mock_pending_result.scalar.return_value = 0
+    mock_tree_result = MagicMock()
+    mock_tree_result.scalars.return_value.all.return_value = []
+    mock_db_session.execute.side_effect = [mock_result, mock_pending_result, mock_tree_result]
+
+    response = client.get(f"/api/v1/reports/{job_id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    sandbox = data["results"]["sandbox"]
+    assert sandbox["provider"] == "capev2"
+    assert sandbox["task_id"] == "42"
+    assert sandbox["behaviors"][0]["type"] == "process_injection"
+    assert sandbox["network_connections"][0]["dst_port"] == 443
+    assert sandbox["tcp_udp"][0]["protocol"] == "tcp"
+    assert sandbox["screenshots"][0]["name"] == "0001.jpg"
+    assert sandbox["raw_report_ref"] == "https://cape.local/apiv2/tasks/report/42/?format=json"
 
 
 def test_get_report_adds_report_schema_version_and_empty_explainability(
@@ -465,12 +560,6 @@ def test_get_report_adds_report_schema_version_and_empty_explainability(
                 "ips": [],
                 "hashes": {"md5": "", "sha1": "", "sha256": "abc123"},
             },
-            "sandbox": {
-                "executed": False,
-                "behaviors": [],
-                "network_connections": [],
-                "is_mock": True,
-            },
         },
         "timings": {"total_ms": 100, "stages": []},
     }
@@ -495,6 +584,8 @@ def test_get_report_adds_report_schema_version_and_empty_explainability(
         "degraded",
         "blocked",
     }
+    assert data["results"]["sandbox"]["provider"] is None
+    assert data["results"]["sandbox"]["is_mock"] is False
 
 
 def test_get_report_preserves_worker_authored_blocked_explainability(

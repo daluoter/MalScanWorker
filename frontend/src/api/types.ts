@@ -309,9 +309,26 @@ export interface Report {
         iocs: Iocs
         sandbox: {
             executed: boolean
-            behaviors: Array<{ type: string; path?: string; key?: string }>
+            provider?: string | null
+            task_id?: string | null
+            behaviors: Array<{ type: string; path?: string | null; key?: string | null; detail?: string | null }>
             network_connections: Array<{ dst_ip: string; dst_port: number; protocol: string }>
             is_mock: boolean
+            verdict_hint?: string | null
+            processes?: Array<Record<string, unknown>>
+            files?: Array<Record<string, unknown>>
+            registry?: Array<Record<string, unknown>>
+            mutexes?: Array<Record<string, unknown>>
+            dns?: Array<Record<string, unknown>>
+            http?: Array<Record<string, unknown>>
+            tcp_udp?: Array<{ dst_ip: string; dst_port: number; protocol: string }>
+            dropped_files?: Array<Record<string, unknown>>
+            screenshots?: Array<Record<string, unknown>>
+            pcap?: Record<string, unknown>
+            memory_dump?: Record<string, unknown>
+            iocs?: Record<string, unknown>
+            errors?: string[]
+            raw_report_ref?: string | null
         }
         archive_extract?: {
             archive_type: string | null
