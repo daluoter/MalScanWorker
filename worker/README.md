@@ -17,7 +17,7 @@ Current pipeline flow:
 3. **Sequential stages**
    - `archive-extract` - recursive extraction + sub-job creation
    - `document-analysis` - document parsing and artifact extraction
-   - `sandbox` - sandbox analysis (mock in MVP)
+   - `sandbox` - deferred sandbox dispatch / provider-backed dynamic analysis
 
 ## Stages
 
@@ -29,7 +29,42 @@ Current pipeline flow:
 6. **format-analysis** - AnalyzerRegistry dispatch and unified format risk scoring
 7. **archive-extract** - Archive extraction and recursive artifact scheduling
 8. **document-analysis** - Document parsing and artifact extraction
-9. **sandbox** - Sandbox analysis (mock in MVP)
+9. **sandbox** - Sandbox dispatch stage with provider-backed dynamic analysis
+
+## Sandbox Architecture
+
+The worker now uses two roles:
+
+1. `python -m malscan_worker.main`
+   - consumes `malscan.jobs`
+   - finishes static/recursive analysis
+   - stores a partial report if sandbox work is deferred
+   - publishes a follow-up message to `malscan.jobs.sandbox`
+
+2. `python -m malscan_worker.sandbox_main`
+   - consumes `malscan.jobs.sandbox`
+   - runs the configured sandbox provider
+   - writes normalized `results.sandbox`
+   - recomputes direct risk and marks the job `done`
+
+## Sandbox Providers
+
+Supported provider names:
+
+1. `mock`
+2. `capev2`
+
+Relevant environment variables:
+
+- `SANDBOX_PROVIDER`
+- `SANDBOX_BASE_URL`
+- `SANDBOX_API_TOKEN`
+- `SANDBOX_TIMEOUT_SECONDS`
+- `SANDBOX_POLL_INTERVAL_SECONDS`
+- `SANDBOX_ENABLE_URL_SUBMISSION`
+- `RABBITMQ_SANDBOX_QUEUE`
+
+If the configured provider is unavailable, the worker falls back to `mock` and records the reason in `results.sandbox.errors`.
 
 ## Format-Specific Analyzer Layer (Phase 1)
 
@@ -98,4 +133,5 @@ This allows incremental migration without breaking existing Office internals.
 ```bash
 poetry install
 poetry run python -m malscan_worker.main
+poetry run python -m malscan_worker.sandbox_main
 ```

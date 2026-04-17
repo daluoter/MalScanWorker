@@ -16,12 +16,16 @@ from malscan_worker.db import (
     _engine,
     ensure_root_artifact,
     get_job_for_context,
+    update_artifact_risk,
     update_job_result,
+    update_job_result_strict,
     update_job_stage,
     update_job_status,
 )
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.metrics import stage_latency
+from malscan_worker.sandbox import MockSandboxProvider
+from malscan_worker.sandbox.publisher import publish_sandbox_job
 from malscan_worker.stages.archive_extract import ArchiveExtractStage
 from malscan_worker.stages.base import StageContext, StageResult
 from malscan_worker.stages.clamav import ClamAVStage
@@ -30,7 +34,7 @@ from malscan_worker.stages.document_analysis import DocumentAnalysisStage
 from malscan_worker.stages.filetype import FileTypeStage
 from malscan_worker.stages.format_analysis import FormatAnalysisStage
 from malscan_worker.stages.ioc_extract import IocExtractStage
-from malscan_worker.stages.sandbox import SandboxStage
+from malscan_worker.stages.sandbox import SandboxStage, execute_sandbox_analysis
 from malscan_worker.stages.yara_scan import YaraStage
 from malscan_worker.storage import download_file
 
@@ -80,6 +84,328 @@ def _cleanup_temp_dir(job_id: str) -> None:
             log.warning("temp_dir_cleanup_failed", job_id=job_id, error=str(e))
 
 
+def _normalize_ioc_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def _merge_unique(primary: list[str], secondary: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for value in primary + secondary:
+        if value and value not in seen:
+            seen.add(value)
+            merged.append(value)
+    return merged
+
+
+def _prepare_scorer_stage_findings(stage_findings: dict[str, Any]) -> dict[str, Any]:
+    scorer_stage_findings = dict(stage_findings)
+    if isinstance(scorer_stage_findings.get("ioc-extract"), dict):
+        scorer_ioc = dict(scorer_stage_findings["ioc-extract"])
+        for key in ("urls", "domains", "ips", "ip_addresses"):
+            if scorer_ioc.get(key) is None:
+                scorer_ioc[key] = []
+        scorer_stage_findings["ioc-extract"] = scorer_ioc
+    if isinstance(scorer_stage_findings.get("deobfuscation"), dict):
+        scorer_deob = dict(scorer_stage_findings["deobfuscation"])
+        extracted_iocs = scorer_deob.get("extracted_iocs")
+        if isinstance(extracted_iocs, dict):
+            scorer_deob_iocs = dict(extracted_iocs)
+            for key in ("urls", "domains", "ips", "ip_addresses"):
+                if scorer_deob_iocs.get(key) is None:
+                    scorer_deob_iocs[key] = []
+            scorer_deob["extracted_iocs"] = scorer_deob_iocs
+        scorer_stage_findings["deobfuscation"] = scorer_deob
+    if isinstance(scorer_stage_findings.get("sandbox"), dict):
+        scorer_sandbox = dict(scorer_stage_findings["sandbox"])
+        if scorer_sandbox.get("network_connections") is None and isinstance(
+            scorer_sandbox.get("tcp_udp"), list
+        ):
+            scorer_sandbox["network_connections"] = list(scorer_sandbox["tcp_udp"])
+        scorer_stage_findings["sandbox"] = scorer_sandbox
+    return scorer_stage_findings
+
+
+def _serialize_evidence_entry(entry: Any) -> dict[str, Any]:
+    return {
+        "id": entry.evidence_id,
+        "source": entry.source,
+        "kind": entry.kind,
+        "tier": entry.tier,
+        "severity": entry.severity,
+        "confidence": entry.confidence,
+        "points": entry.points,
+        "scope": entry.scope,
+        "depth": entry.depth,
+        "artifact_id": entry.artifact_id,
+        "related_artifact_id": entry.related_artifact_id,
+        "stage": entry.stage,
+        "analyzer": entry.analyzer,
+        "reason": entry.reason,
+        "raw": dict(entry.raw),
+        "finding_ids": [],
+        "ioc_ids": [],
+        "decoded_ids": [],
+        "score_contribution": dict(entry.score_contribution),
+    }
+
+
+def _build_risk_summary(
+    *,
+    stage_findings: dict[str, Any],
+    artifact_id: str | None,
+) -> tuple[Any, dict[str, Any]]:
+    scorer_stage_findings = _prepare_scorer_stage_findings(stage_findings)
+    direct_evidence = build_direct_evidence(
+        artifact_id=artifact_id,
+        stage_findings=scorer_stage_findings,
+    )
+    decision = score_direct_evidence(direct_evidence=direct_evidence)
+    risk = {
+        "policy_version": decision.policy_version,
+        "risk_score": decision.risk_score,
+        "risk_level": decision.risk_level,
+        "legacy_verdict": decision.legacy_verdict,
+        "malicious_gate_open": decision.breakdown.malicious_gate_open,
+        "high_gate_open": decision.breakdown.high_gate_open,
+        "independent_source_count": decision.breakdown.independent_source_count,
+        "breakdown": {
+            "local_score": decision.breakdown.local_score,
+            "inherited_score": decision.breakdown.inherited_score,
+            "synergy_bonus": decision.breakdown.synergy_bonus,
+            "dampener": decision.breakdown.dampener,
+            "final_score": decision.breakdown.final_score,
+        },
+        "evidence": [_serialize_evidence_entry(entry) for entry in decision.evidence],
+        "top_evidence": [_serialize_evidence_entry(entry) for entry in decision.top_evidence],
+        "descendant_summary": {},
+        "score_trace": dict(decision.score_trace),
+    }
+    return decision, risk
+
+
+def _extract_stage_findings_from_report(report: dict[str, Any]) -> dict[str, Any]:
+    results_value = report.get("results")
+    results = results_value if isinstance(results_value, dict) else {}
+    iocs_value = results.get("iocs")
+    iocs = iocs_value if isinstance(iocs_value, dict) else {}
+    hashes_value = iocs.get("hashes")
+    hashes = hashes_value if isinstance(hashes_value, dict) else {}
+    file_value = report.get("file")
+    file_info = file_value if isinstance(file_value, dict) else {}
+    findings: dict[str, Any] = {}
+
+    av_result = results.get("av_result")
+    if isinstance(av_result, dict):
+        findings["clamav"] = {
+            "infected": bool(av_result.get("infected", False)),
+            "threat_name": av_result.get("threat_name"),
+            "result": av_result.get("threat_name"),
+        }
+
+    yara_hits = results.get("yara_hits")
+    if isinstance(yara_hits, list):
+        findings["yara"] = {"matches": yara_hits}
+
+    if isinstance(iocs, dict):
+        findings["ioc-extract"] = {
+            "urls": list(iocs.get("urls") or []),
+            "domains": list(iocs.get("domains") or []),
+            "ips": list(iocs.get("ips") or []),
+            "ip_addresses": list(iocs.get("ips") or []),
+            "ioc_items": list(iocs.get("ioc_items") or []),
+            "md5": hashes.get("md5", ""),
+            "sha1": hashes.get("sha1", ""),
+            "sha256": hashes.get("sha256", file_info.get("sha256", "")),
+        }
+
+    for key, stage_name in (
+        ("format_analysis", "format-analysis"),
+        ("deobfuscation", "deobfuscation"),
+        ("document_analysis", "document-analysis"),
+        ("sandbox", "sandbox"),
+        ("archive_extract", "archive-extract"),
+    ):
+        value = results.get(key)
+        if isinstance(value, dict):
+            findings[stage_name] = value
+
+    return findings
+
+
+def _apply_direct_risk_to_report(
+    report: dict[str, Any],
+    *,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    decision, risk = _build_risk_summary(
+        stage_findings=_extract_stage_findings_from_report(report),
+        artifact_id=artifact_id,
+    )
+    report["verdict"] = decision.legacy_verdict
+    report["score"] = decision.risk_score
+    report["risk_level"] = decision.risk_level
+    report["risk"] = risk
+    return report
+
+
+def _upsert_stage_timing(report: dict[str, Any], stage_timing: dict[str, Any]) -> None:
+    timings = report.setdefault("timings", {"total_ms": 0, "stages": []})
+    stages = timings.setdefault("stages", [])
+    new_duration = int(stage_timing.get("duration_ms", 0) or 0)
+    previous_duration = 0
+    for index, existing in enumerate(stages):
+        if existing.get("name") == stage_timing.get("name"):
+            previous_duration = int(existing.get("duration_ms", 0) or 0)
+            stages[index] = stage_timing
+            break
+    else:
+        stages.append(stage_timing)
+    timings["total_ms"] = max(
+        0,
+        int(timings.get("total_ms", 0) or 0) - previous_duration + new_duration,
+    )
+
+
+def _is_deferred_sandbox_result(findings: Any) -> bool:
+    return isinstance(findings, dict) and str(findings.get("status") or "") == "deferred"
+
+
+def _should_finalize_after_static_pipeline(results: list[StageResult]) -> bool:
+    for result in results:
+        if result.stage_name == "sandbox":
+            return not _is_deferred_sandbox_result(result.findings)
+    return True
+
+
+def _build_sandbox_job_payload(job_data: dict[str, Any], ctx: StageContext) -> dict[str, Any]:
+    return {
+        "job_id": job_data["job_id"],
+        "file_id": job_data["file_id"],
+        "storage_key": job_data.get("storage_key", ""),
+        "sha256": job_data.get("sha256", ""),
+        "original_filename": job_data.get("original_filename", "unknown"),
+        "artifact_id": ctx.artifact_id,
+        "root_artifact_id": ctx.root_artifact_id,
+        "root_job_id": ctx.root_job_id or ctx.job_id,
+        "ancestor_hashes": list(ctx.ancestor_hashes),
+        "deferred_stage": "sandbox",
+    }
+
+
+async def finalize_deferred_sandbox_job(job_data: dict[str, Any]) -> dict[str, Any]:
+    """Run sandbox detonation and finalize a previously deferred job."""
+    job_id = job_data["job_id"]
+    work_dir = Path(f"/tmp/{job_id}-sandbox")
+    sandbox_started = datetime.now(timezone.utc)
+    file_path: Path | None = None
+
+    try:
+        async with AsyncSession(_engine) as session:
+            job_instance = await get_job_for_context(job_id, session=session)
+            if job_instance is None:
+                raise ValueError(f"Job not found: {job_id}")
+            stored_result = job_instance.result
+            if not isinstance(stored_result, dict):
+                raise RuntimeError(f"Partial report not available for job {job_id}")
+            artifact_id = job_data.get("artifact_id")
+            if artifact_id is None and getattr(job_instance, "artifact_id", None) is not None:
+                artifact_id = str(job_instance.artifact_id)
+
+        existing_sandbox = stored_result.get("results", {}).get("sandbox")
+        if isinstance(existing_sandbox, dict) and bool(existing_sandbox.get("executed")):
+            report = dict(stored_result)
+            if artifact_id:
+                try:
+                    await update_artifact_risk(
+                        artifact_id=artifact_id,
+                        verdict=report["verdict"],
+                        score=report["score"],
+                        risk_level=report["risk_level"],
+                        policy_version=report["risk"]["policy_version"],
+                    )
+                except Exception:
+                    log.exception(
+                        "failed_to_update_artifact_risk_after_sandbox_finalize",
+                        artifact_id=artifact_id,
+                        job_id=job_id,
+                    )
+
+            await update_job_status(
+                job_id,
+                "done",
+                current_stage=None,
+                stages_done=settings.stages_total,
+            )
+            return {
+                "job_id": job_id,
+                "status": "done",
+                "verdict": report["verdict"],
+                "score": report["score"],
+            }
+
+        file_path = await download_file(job_data.get("storage_key", ""), work_dir)
+
+        sandbox_result = await execute_sandbox_analysis(
+            file_path=file_path,
+            sha256=job_data.get("sha256", ""),
+            filename=job_data.get("original_filename", "unknown"),
+        )
+        sandbox_ended = datetime.now(timezone.utc)
+
+        report = dict(stored_result)
+        results = report.setdefault("results", {})
+        results["sandbox"] = sandbox_result
+        _upsert_stage_timing(
+            report,
+            {
+                "name": "sandbox",
+                "status": "ok",
+                "duration_ms": int((sandbox_ended - sandbox_started).total_seconds() * 1000),
+                "started_at": sandbox_started.isoformat(),
+                "ended_at": sandbox_ended.isoformat(),
+            },
+        )
+        report = _apply_direct_risk_to_report(report, artifact_id=artifact_id)
+
+        await update_job_result_strict(job_id, report)
+
+        if artifact_id:
+            try:
+                await update_artifact_risk(
+                    artifact_id=artifact_id,
+                    verdict=report["verdict"],
+                    score=report["score"],
+                    risk_level=report["risk_level"],
+                    policy_version=report["risk"]["policy_version"],
+                )
+            except Exception:
+                log.exception(
+                    "failed_to_update_artifact_risk_after_sandbox_finalize",
+                    artifact_id=artifact_id,
+                    job_id=job_id,
+                )
+
+        await update_job_status(
+            job_id,
+            "done",
+            current_stage=None,
+            stages_done=settings.stages_total,
+        )
+        return {
+            "job_id": job_id,
+            "status": "done",
+            "verdict": report["verdict"],
+            "score": report["score"],
+        }
+    finally:
+        _cleanup_temp_dir(f"{job_id}-sandbox")
+
+
 def _build_analysis_result(
     job_id: str,
     file_id: str,
@@ -88,22 +414,6 @@ def _build_analysis_result(
     total_ms: int,
 ) -> dict[str, Any]:
     """Build complete analysis result for storage."""
-
-    def _normalize_ioc_list(value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, str)]
-        return []
-
-    def _merge_unique(primary: list[str], secondary: list[str]) -> list[str]:
-        merged: list[str] = []
-        seen: set[str] = set()
-        for value in primary + secondary:
-            if value and value not in seen:
-                seen.add(value)
-                merged.append(value)
-        return merged
 
     # Extract key findings from stage results
     stage_findings = {r.stage_name: r.findings for r in results}
@@ -213,74 +523,8 @@ def _build_analysis_result(
         ],
     }
 
-    scorer_stage_findings = dict(stage_findings)
-    if isinstance(scorer_stage_findings.get("ioc-extract"), dict):
-        scorer_ioc = dict(scorer_stage_findings["ioc-extract"])
-        for key in ("urls", "domains", "ips", "ip_addresses"):
-            if scorer_ioc.get(key) is None:
-                scorer_ioc[key] = []
-        scorer_stage_findings["ioc-extract"] = scorer_ioc
-    if isinstance(scorer_stage_findings.get("deobfuscation"), dict):
-        scorer_deob = dict(scorer_stage_findings["deobfuscation"])
-        extracted_iocs = scorer_deob.get("extracted_iocs")
-        if isinstance(extracted_iocs, dict):
-            scorer_deob_iocs = dict(extracted_iocs)
-            for key in ("urls", "domains", "ips", "ip_addresses"):
-                if scorer_deob_iocs.get(key) is None:
-                    scorer_deob_iocs[key] = []
-            scorer_deob["extracted_iocs"] = scorer_deob_iocs
-        scorer_stage_findings["deobfuscation"] = scorer_deob
-
     artifact_id = getattr(ctx, "artifact_id", None)
-    direct_evidence = build_direct_evidence(
-        artifact_id=artifact_id,
-        stage_findings=scorer_stage_findings,
-    )
-    decision = score_direct_evidence(direct_evidence=direct_evidence)
-
-    def _serialize_evidence_entry(entry: Any) -> dict[str, Any]:
-        return {
-            "id": entry.evidence_id,
-            "source": entry.source,
-            "kind": entry.kind,
-            "tier": entry.tier,
-            "severity": entry.severity,
-            "confidence": entry.confidence,
-            "points": entry.points,
-            "scope": entry.scope,
-            "depth": entry.depth,
-            "artifact_id": entry.artifact_id,
-            "related_artifact_id": entry.related_artifact_id,
-            "stage": entry.stage,
-            "analyzer": entry.analyzer,
-            "reason": entry.reason,
-            "raw": dict(entry.raw),
-            "finding_ids": [],
-            "ioc_ids": [],
-            "decoded_ids": [],
-            "score_contribution": dict(entry.score_contribution),
-        }
-
-    risk = {
-        "policy_version": decision.policy_version,
-        "risk_score": decision.risk_score,
-        "risk_level": decision.risk_level,
-        "legacy_verdict": decision.legacy_verdict,
-        "malicious_gate_open": decision.breakdown.malicious_gate_open,
-        "high_gate_open": decision.breakdown.high_gate_open,
-        "independent_source_count": decision.breakdown.independent_source_count,
-        "breakdown": {
-            "local_score": decision.breakdown.local_score,
-            "inherited_score": decision.breakdown.inherited_score,
-            "synergy_bonus": decision.breakdown.synergy_bonus,
-            "dampener": decision.breakdown.dampener,
-            "final_score": decision.breakdown.final_score,
-        },
-        "evidence": [_serialize_evidence_entry(entry) for entry in decision.evidence],
-        "top_evidence": [_serialize_evidence_entry(entry) for entry in decision.top_evidence],
-        "descendant_summary": {},
-        "score_trace": dict(decision.score_trace),
-    }
+    decision, risk = _build_risk_summary(stage_findings=stage_findings, artifact_id=artifact_id)
 
     return {
         "report_schema_version": "mswr-report-v2",
@@ -499,39 +743,94 @@ async def run_pipeline(job_data: dict[str, Any]) -> dict[str, Any]:
             total_ms=total_ms,
         )
 
-        # Store result in database
-        await update_job_result(job_id, analysis_result)
+        should_finalize = _should_finalize_after_static_pipeline(results)
+        artifact_id = job_data.get("artifact_id") or getattr(ctx, "artifact_id", None)
 
-        # Update artifact verdict if this job is linked to an artifact
-        if job_data.get("artifact_id"):
+        if should_finalize:
+            await update_job_result(job_id, analysis_result)
+            if artifact_id:
+                try:
+                    await update_artifact_risk(
+                        artifact_id=artifact_id,
+                        verdict=analysis_result["verdict"],
+                        score=analysis_result["score"],
+                        risk_level=analysis_result["risk_level"],
+                        policy_version=analysis_result["risk"]["policy_version"],
+                    )
+                except Exception:
+                    log.exception("failed_to_update_artifact_risk", artifact_id=artifact_id)
+
+            await update_job_status(
+                job_id,
+                "done",
+                current_stage=None,
+                stages_done=total_stages,
+            )
+            final_status = "done"
+        else:
+            await update_job_result_strict(job_id, analysis_result)
             try:
-                from malscan_worker.db import update_artifact_risk
-
-                await update_artifact_risk(
-                    artifact_id=job_data["artifact_id"],
-                    verdict=analysis_result["verdict"],
-                    score=analysis_result["score"],
-                    risk_level=analysis_result["risk_level"],
-                    policy_version=analysis_result["risk"]["policy_version"],
+                await publish_sandbox_job(_build_sandbox_job_payload(job_data, ctx))
+                if artifact_id:
+                    try:
+                        await update_artifact_risk(
+                            artifact_id=artifact_id,
+                            verdict=analysis_result["verdict"],
+                            score=analysis_result["score"],
+                            risk_level=analysis_result["risk_level"],
+                            policy_version=analysis_result["risk"]["policy_version"],
+                        )
+                    except Exception:
+                        log.exception(
+                            "failed_to_update_partial_artifact_risk",
+                            artifact_id=artifact_id,
+                        )
+                await update_job_status(
+                    job_id,
+                    "scanning",
+                    current_stage="sandbox_pending",
+                    stages_done=total_stages - 1,
                 )
-            except Exception:
-                log.exception("failed_to_update_artifact_risk", artifact_id=job_data["artifact_id"])
-
-        # Determine final status
-        # If we reached here, the job is technically "done",
-        # even if it found malware or had partial failures.
-        await update_job_status(
-            job_id,
-            "done",
-            current_stage=None,
-            stages_done=total_stages,
-        )
+                final_status = "scanning"
+            except Exception as exc:  # noqa: BLE001
+                log.warning("sandbox_publish_failed_mock_finalize", job_id=job_id, error=str(exc))
+                fallback = MockSandboxProvider().build_mock_result(
+                    file_path=file_path,
+                    sha256=ctx.sha256,
+                    filename=ctx.original_filename,
+                    reason=f"fallback to mock after sandbox queue publish failed: {exc}",
+                )
+                analysis_result.setdefault("results", {})["sandbox"] = fallback
+                analysis_result = _apply_direct_risk_to_report(
+                    analysis_result,
+                    artifact_id=artifact_id,
+                )
+                await update_job_result_strict(job_id, analysis_result)
+                if artifact_id:
+                    try:
+                        await update_artifact_risk(
+                            artifact_id=artifact_id,
+                            verdict=analysis_result["verdict"],
+                            score=analysis_result["score"],
+                            risk_level=analysis_result["risk_level"],
+                            policy_version=analysis_result["risk"]["policy_version"],
+                        )
+                    except Exception:
+                        log.exception("failed_to_update_artifact_risk", artifact_id=artifact_id)
+                await update_job_status(
+                    job_id,
+                    "done",
+                    current_stage=None,
+                    stages_done=total_stages,
+                )
+                final_status = "done"
 
         return {
             "job_id": job_id,
             "stages": [r.__dict__ for r in results],
             "total_ms": total_ms,
             "verdict": analysis_result["verdict"],
+            "status": final_status,
         }
 
     finally:

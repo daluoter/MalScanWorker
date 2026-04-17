@@ -141,6 +141,8 @@ async def test_deobfuscation_stage_success_schema(
     assert result.findings["candidates"] == [
         {
             "content": "http://evil.test",
+            "decoded_id": "decoded::job-1::1",
+            "source_stage": "deobfuscation",
             "content_encoding": "utf-8",
             "content_byte_length": 16,
             "serialized_content_byte_length": 16,

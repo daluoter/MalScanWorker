@@ -112,6 +112,7 @@ class SandboxBehavior(BaseModel):
     type: str
     path: str | None = None
     key: str | None = None
+    detail: str | None = None
 
 
 class SandboxConnection(BaseModel):
@@ -126,9 +127,26 @@ class SandboxResult(BaseModel):
     """Sandbox analysis result."""
 
     executed: bool
-    behaviors: list[SandboxBehavior]
-    network_connections: list[SandboxConnection]
+    behaviors: list[SandboxBehavior] = Field(default_factory=list)
+    network_connections: list[SandboxConnection] = Field(default_factory=list)
+    provider: str | None = None
+    task_id: str | None = None
     is_mock: bool
+    verdict_hint: str | None = None
+    processes: list[dict[str, Any]] = Field(default_factory=list)
+    files: list[dict[str, Any]] = Field(default_factory=list)
+    registry: list[dict[str, Any]] = Field(default_factory=list)
+    mutexes: list[dict[str, Any]] = Field(default_factory=list)
+    dns: list[dict[str, Any]] = Field(default_factory=list)
+    http: list[dict[str, Any]] = Field(default_factory=list)
+    tcp_udp: list[SandboxConnection] = Field(default_factory=list)
+    dropped_files: list[dict[str, Any]] = Field(default_factory=list)
+    screenshots: list[dict[str, Any]] = Field(default_factory=list)
+    pcap: dict[str, Any] = Field(default_factory=dict)
+    memory_dump: dict[str, Any] = Field(default_factory=dict)
+    iocs: dict[str, Any] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+    raw_report_ref: str | None = None
 
 
 class RiskEvidence(BaseModel):

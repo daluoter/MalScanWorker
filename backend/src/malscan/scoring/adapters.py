@@ -389,8 +389,18 @@ def _append_sandbox(
 ) -> None:
     behaviors = list(finding.get("behaviors", []))
     network_connections = list(finding.get("network_connections", []))
+    if not network_connections:
+        network_connections = list(finding.get("tcp_udp", []))
     behavior_types = {str(behavior.get("type", "")) for behavior in behaviors}
     if behavior_types & SANDBOX_CONFIRMED_BEHAVIORS:
+        raw_payload = {
+            "behaviors": behaviors,
+            "network_connections": network_connections,
+        }
+        if finding.get("provider") is not None:
+            raw_payload["provider"] = finding.get("provider")
+        if finding.get("task_id") is not None:
+            raw_payload["task_id"] = finding.get("task_id")
         _append(
             records,
             source="sandbox",
@@ -402,10 +412,7 @@ def _append_sandbox(
             cap_group="dynamic",
             artifact_id=artifact_id,
             reason="Sandbox confirmed malicious behavior",
-            raw={
-                "behaviors": behaviors,
-                "network_connections": network_connections,
-            },
+            raw=raw_payload,
         )
 
 

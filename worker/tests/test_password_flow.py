@@ -1,6 +1,6 @@
 """Tests for worker password-control flow across pipeline and consumer."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from malscan.scoring.policy import POLICY_VERSION
@@ -71,6 +71,88 @@ async def test_consumer_password_required_updates_status_and_ack(mocker):
         "11111111-1111-1111-1111-111111111111",
         "password_required",
         error_message="Archive is password-protected. Please provide a password to continue.",
+    )
+    message.ack.assert_awaited_once()
+    message.reject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_consumer_deferred_sandbox_does_not_increment_done_metric(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "10101010-1010-1010-1010-101010101010",
+            "file_id": "20202020-2020-2020-2020-202020202020",
+        }
+    )
+
+    scanning_counter = MagicMock()
+    done_counter = MagicMock()
+
+    def _labels(*, status: str):
+        if status == "scanning":
+            return scanning_counter
+        if status == "done":
+            return done_counter
+        return MagicMock()
+
+    mocker.patch(
+        "malscan_worker.consumer.run_pipeline",
+        new_callable=AsyncMock,
+        return_value={"status": "scanning"},
+    )
+    mocker.patch(
+        "malscan_worker.consumer.job_total.labels",
+        side_effect=_labels,
+    )
+    mocker.patch("malscan_worker.consumer.worker_active_jobs.inc")
+    mocker.patch("malscan_worker.consumer.worker_active_jobs.dec")
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status",
+        new_callable=AsyncMock,
+    )
+
+    await consumer.process_message(message)
+
+    update_status.assert_awaited_once_with(
+        "10101010-1010-1010-1010-101010101010",
+        "scanning",
+    )
+    scanning_counter.inc.assert_called_once_with()
+    done_counter.inc.assert_not_called()
+    message.ack.assert_awaited_once()
+    message.reject.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sandbox_consumer_preserves_progress_while_detonation_runs(mocker):
+    from malscan_worker import consumer
+
+    message = _FakeMessage(
+        {
+            "job_id": "30303030-3030-3030-3030-303030303030",
+            "file_id": "40404040-4040-4040-4040-404040404040",
+        }
+    )
+
+    mocker.patch(
+        "malscan_worker.consumer.finalize_deferred_sandbox_job",
+        new_callable=AsyncMock,
+        return_value={"status": "done"},
+    )
+    update_status = mocker.patch(
+        "malscan_worker.consumer.update_job_status",
+        new_callable=AsyncMock,
+    )
+
+    await consumer.process_sandbox_message(message)
+
+    update_status.assert_awaited_once_with(
+        "30303030-3030-3030-3030-303030303030",
+        "scanning",
+        current_stage="sandbox",
+        stages_done=consumer.settings.stages_total - 1,
     )
     message.ack.assert_awaited_once()
     message.reject.assert_not_awaited()

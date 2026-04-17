@@ -426,11 +426,11 @@ export default function ReportPage() {
             </div>
 
             {/* Sandbox Mock Notice */}
-            {report.results.sandbox.is_mock && (
+            {report.results.sandbox.executed && report.results.sandbox.is_mock && (
                 <div className="glass-card p-6 mb-4 opacity-60">
                     <h2 className="text-lg font-bold mb-2 text-slate-400">🧪 沙箱分析 (Mock)</h2>
                     <p className="text-sm text-slate-500 font-mono">
-                        目前顯示為模擬結果，正式沙箱分析將於後續版本提供。
+                        目前顯示為模擬結果，代表實際 provider 暫時不可用或系統已主動降級。
                     </p>
                 </div>
             )}

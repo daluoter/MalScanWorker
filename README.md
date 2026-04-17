@@ -295,11 +295,19 @@ MINIO_ENDPOINT=localhost:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/
+RABBITMQ_SANDBOX_QUEUE=malscan.jobs.sandbox
 CLAMAV_HOST=localhost
 CLAMAV_PORT=3310
-SANDBOX_MOCK=true
+SANDBOX_PROVIDER=mock
+SANDBOX_BASE_URL=
+SANDBOX_API_TOKEN=
+SANDBOX_TIMEOUT_SECONDS=900
+SANDBOX_POLL_INTERVAL_SECONDS=10
+SANDBOX_ENABLE_URL_SUBMISSION=false
 EOF
 ```
+
+> `SANDBOX_MOCK` 仍保留為相容性 fallback，但新的主要設定方式是 `SANDBOX_PROVIDER`。若要接 CAPEv2，請將 `SANDBOX_PROVIDER` 設為 `capev2` 並補上 `SANDBOX_BASE_URL`。
 
 #### Ingest (`ingest/.env`)
 ```bash
@@ -343,6 +351,7 @@ poetry run uvicorn malscan.main:app --reload
 cd worker
 poetry install
 poetry run python -m malscan_worker.main
+poetry run python -m malscan_worker.sandbox_main
 ```
 
 ### 📦 測試完整容器化環境（Docker Compose）
@@ -557,6 +566,85 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 - 若封存檔連續 3 次密碼錯誤，worker 會產生 `verdict = "unknown"`、`risk_score = 0` 的保守報告
 - `results.archive_extract.reason` 與 `explainability.failure_diagnostics` 會明確標示為密碼耗盡造成的分析阻斷
 - 這類報告會明確說明只覆蓋最外層檔案，避免把未完成分析誤解為乾淨樣本
+
+---
+
+## 動態沙箱整合
+
+系統現在支援 provider-based sandbox integration，並以「最小破壞、最大可用」方式將長時間 detonation 與原本靜態 worker 解耦。
+
+### 為什麼採 dedicated sandbox queue / worker
+
+- 靜態 worker 先完成既有 static/recursive stages，再把 detonation 工作送到 `malscan.jobs.sandbox`
+- 原本 job 會暫時維持 `status = scanning`、`current_stage = sandbox_pending`
+- 專用 `sandbox-worker` 完成 detonation 後，回填 `results.sandbox`、重算 direct risk、再把 job 標記為 `done`
+- 這樣 CAPE 延遲或不穩定時，不會卡住原本的靜態掃描吞吐量
+
+### 新增環境變數
+
+- `SANDBOX_PROVIDER=mock|capev2`
+- `SANDBOX_BASE_URL`
+- `SANDBOX_API_TOKEN`
+- `SANDBOX_TIMEOUT_SECONDS`
+- `SANDBOX_POLL_INTERVAL_SECONDS`
+- `SANDBOX_ENABLE_URL_SUBMISSION`
+- `RABBITMQ_SANDBOX_QUEUE`（預設 `malscan.jobs.sandbox`）
+
+### 支援的 provider
+
+- `mock`
+  - 用於開發、測試、或 provider unavailable fallback
+- `capev2`
+  - 支援 file submission
+  - 支援 URL submission（需 `SANDBOX_ENABLE_URL_SUBMISSION=true`）
+  - 支援 task polling
+  - 支援 normalized report fetch
+  - 支援 screenshots / pcap / dropped files / memory metadata 的 best-effort refs
+
+### `results.sandbox` 合約
+
+為了保持向後相容，原本欄位仍保留：
+
+- `behaviors`
+- `network_connections`
+- `is_mock`
+
+同時新增 additive 欄位：
+
+- `executed`
+- `provider`
+- `task_id`
+- `verdict_hint`
+- `processes`
+- `files`
+- `registry`
+- `mutexes`
+- `dns`
+- `http`
+- `tcp_udp`
+- `dropped_files`
+- `screenshots`
+- `pcap`
+- `memory_dump`
+- `iocs`
+- `errors`
+- `raw_report_ref`
+
+### 失敗處理與 fallback
+
+- CAPEv2 HTTP 呼叫會使用 bounded retries
+- detonation polling 受 `SANDBOX_TIMEOUT_SECONDS` 限制
+- provider 連續失敗會觸發 in-process circuit breaker
+- provider unavailable、queue publish 失敗、或 CAPE request/report 失敗時，系統會 fallback 到 `mock`，並把原因寫入 `results.sandbox.errors`
+- 若 sandbox-worker 在 provider fallback 之前就因下載、資料庫更新、或其他基礎設施錯誤失敗，job 仍可能重試或最終進入 `failed`；這類情況不保證一定會 mock-finalize
+
+### Docker Compose
+
+- `worker`：原本靜態/遞迴分析 worker
+- `sandbox-worker`：專責消費 `malscan.jobs.sandbox`
+- 兩個 worker 都會啟動自己的 metrics server；部署/監控時應分別抓取兩個 service，而不是假設只有單一 worker target
+
+啟動後可透過相同 API 查 job/report；差異只在於 `done` 會延後到 sandbox backfill 完成。
 
 ---
 

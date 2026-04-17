@@ -419,6 +419,30 @@ def test_sandbox_reads_behavior_dicts_and_uses_dynamic_cap_group() -> None:
     }
 
 
+def test_sandbox_scoring_reads_additive_network_shape_too() -> None:
+    records = build_direct_evidence(
+        artifact_id="artifact-1",
+        stage_findings={
+            "sandbox": {
+                "behaviors": [{"type": "credential_theft"}],
+                "tcp_udp": [{"dst_ip": "10.0.0.8", "dst_port": 8443, "protocol": "tcp"}],
+                "provider": "capev2",
+                "task_id": "42",
+            }
+        },
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record.kind == "sandbox_confirmed_malicious_behavior"
+    assert record.raw == {
+        "behaviors": [{"type": "credential_theft"}],
+        "network_connections": [{"dst_ip": "10.0.0.8", "dst_port": 8443, "protocol": "tcp"}],
+        "provider": "capev2",
+        "task_id": "42",
+    }
+
+
 def test_build_direct_evidence_preserves_artifact_and_analyzer_provenance() -> None:
     records = build_direct_evidence(
         artifact_id="artifact-1",

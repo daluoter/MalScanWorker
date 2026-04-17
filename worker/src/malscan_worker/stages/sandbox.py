@@ -1,21 +1,88 @@
-"""Sandbox analysis stage - Mock implementation for MVP."""
+"""Sandbox stage orchestration and deferred execution helpers."""
 
-import asyncio
+from __future__ import annotations
+
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
-from malscan_worker.config import get_settings
+import structlog
+
+from malscan_worker.config import Settings, get_settings
+from malscan_worker.sandbox import (
+    build_empty_sandbox_result,
+    get_default_sandbox_provider_registry,
+    resolve_sandbox_provider_name,
+)
 from malscan_worker.stages.base import Stage, StageContext, StageResult
 
-settings = get_settings()
+log = structlog.get_logger()
+
+
+def _duration_ms(started_at: datetime, ended_at: datetime) -> int:
+    return int((ended_at - started_at).total_seconds() * 1000)
+
+
+def build_deferred_sandbox_result(
+    *,
+    provider_name: str,
+    reason: str = "Sandbox dispatched to dedicated queue",
+) -> dict[str, Any]:
+    result = build_empty_sandbox_result(
+        provider=provider_name,
+        executed=False,
+        is_mock=provider_name == "mock",
+        errors=[reason],
+    )
+    result["status"] = "deferred"
+    return result
+
+
+def should_defer_sandbox(
+    *,
+    settings: Settings | None = None,
+    force_inline: bool = False,
+) -> bool:
+    cfg = settings or get_settings()
+    if not cfg.sandbox_enabled or force_inline:
+        return False
+    return True
+
+
+def _provider_kwargs(settings: Settings) -> dict[str, Any]:
+    return {
+        "base_url": settings.sandbox_base_url,
+        "api_token": settings.sandbox_api_token,
+        "timeout_seconds": settings.sandbox_timeout_seconds,
+        "poll_interval_seconds": settings.sandbox_poll_interval_seconds,
+        "enable_url_submission": settings.sandbox_enable_url_submission,
+    }
+
+
+async def execute_sandbox_analysis(
+    *,
+    file_path: Path | None,
+    sha256: str,
+    filename: str,
+    submission_url: str | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Execute sandbox analysis using the configured provider with fallback."""
+    cfg = settings or get_settings()
+    provider_name = resolve_sandbox_provider_name(cfg)
+    registry = get_default_sandbox_provider_registry()
+    return await registry.analyze_with_fallback(
+        provider_name=provider_name,
+        file_path=file_path,
+        sha256=sha256,
+        filename=filename,
+        submission_url=submission_url,
+        provider_kwargs=_provider_kwargs(cfg),
+    )
 
 
 class SandboxStage(Stage):
-    """
-    Sandbox analysis stage.
-
-    MVP: Mock implementation that returns fake behavior data.
-    v2: Replace with real sandbox adapter (Cuckoo, CAPE, etc.)
-    """
+    """Sandbox stage that defers dynamic detonation to a dedicated worker."""
 
     @property
     def name(self) -> str:
@@ -23,59 +90,55 @@ class SandboxStage(Stage):
 
     async def execute(self, ctx: StageContext) -> StageResult:
         started_at = datetime.now(timezone.utc)
+        settings = get_settings()
 
-        # Check if sandbox is enabled
         if not settings.sandbox_enabled:
             ended_at = datetime.now(timezone.utc)
-            duration_ms = int((ended_at - started_at).total_seconds() * 1000)
             return StageResult(
                 stage_name=self.name,
                 status="skipped",
                 started_at=started_at,
                 ended_at=ended_at,
-                duration_ms=duration_ms,
-                findings={"executed": False, "reason": "Sandbox disabled"},
+                duration_ms=_duration_ms(started_at, ended_at),
+                findings=build_empty_sandbox_result(
+                    provider=resolve_sandbox_provider_name(settings),
+                    executed=False,
+                    is_mock=resolve_sandbox_provider_name(settings) == "mock",
+                    errors=["Sandbox disabled"],
+                ),
                 artifacts=[],
                 error=None,
             )
 
-        # Mock implementation
-        if settings.sandbox_mock:
-            # Simulate analysis time
-            await asyncio.sleep(2)
+        provider_name = resolve_sandbox_provider_name(settings)
 
+        if should_defer_sandbox(settings=settings):
             ended_at = datetime.now(timezone.utc)
-            duration_ms = int((ended_at - started_at).total_seconds() * 1000)
-
-            # Generate mock behavior data
-            mock_behaviors = [
-                {"type": "file_write", "path": "C:\\Windows\\Temp\\sample.dll"},
-                {
-                    "type": "registry_read",
-                    "key": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion",
-                },
-            ]
-
-            mock_network = [
-                {"dst_ip": "93.184.216.34", "dst_port": 443, "protocol": "tcp"},
-            ]
-
             return StageResult(
                 stage_name=self.name,
                 status="ok",
                 started_at=started_at,
                 ended_at=ended_at,
-                duration_ms=duration_ms,
-                findings={
-                    "executed": True,
-                    "behaviors": mock_behaviors,
-                    "network_connections": mock_network,
-                    "is_mock": True,
-                },
+                duration_ms=_duration_ms(started_at, ended_at),
+                findings=build_deferred_sandbox_result(provider_name=provider_name),
                 artifacts=[],
                 error=None,
             )
 
-        # Real sandbox implementation would go here
-        # TODO: Implement real sandbox adapter
-        raise NotImplementedError("Real sandbox not implemented yet")
+        findings = await execute_sandbox_analysis(
+            file_path=ctx.file_path,
+            sha256=ctx.sha256,
+            filename=ctx.original_filename,
+            settings=settings,
+        )
+        ended_at = datetime.now(timezone.utc)
+        return StageResult(
+            stage_name=self.name,
+            status="ok",
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=_duration_ms(started_at, ended_at),
+            findings=findings,
+            artifacts=[],
+            error=None,
+        )

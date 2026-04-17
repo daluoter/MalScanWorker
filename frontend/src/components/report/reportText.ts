@@ -17,6 +17,7 @@ const stageMap: Record<string, string> = {
     'ioc-extract': 'IOC 擷取',
     'archive-extract': '封存解壓',
     sandbox: '沙箱分析',
+    sandbox_pending: '等待沙箱結果',
     'format-analysis': '格式分析',
     deobfuscation: '去混淆',
     'document-analysis': '文件分析',

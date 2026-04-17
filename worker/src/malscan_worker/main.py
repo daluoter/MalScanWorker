@@ -9,6 +9,7 @@ import structlog
 from malscan_worker.config import get_settings
 from malscan_worker.consumer import start_consumer
 from malscan_worker.metrics import start_metrics_server
+from malscan_worker.sandbox.publisher import close_sandbox_publisher, init_sandbox_publisher
 from malscan_worker.utils.submission import InternalJobSubmitter
 
 # Configure structlog
@@ -53,6 +54,8 @@ async def main() -> None:
         # the first job that processes an archive.
         await InternalJobSubmitter.get_instance()
         log.info("internal_job_submitter_initialized")
+        await init_sandbox_publisher()
+        log.info("sandbox_publisher_initialized")
 
         # Start RabbitMQ consumer
         await start_consumer(shutdown_event)
@@ -64,6 +67,7 @@ async def main() -> None:
         submitter_instance = InternalJobSubmitter._instance
         if submitter_instance:
             await submitter_instance.close()
+        await close_sandbox_publisher()
         await metrics_runner.cleanup()
         log.info("worker_shutdown_complete")
 

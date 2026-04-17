@@ -231,6 +231,9 @@ async def test_archive_extract_uses_streaming_sha256_helper(tmp_path):
     class _FakeHandler:
         name = "zip"
 
+        def can_handle(self, *args, **kwargs):
+            return True
+
         def extract(self, *args, **kwargs):
             from malscan_worker.extractors.base import ExtractedFile, ExtractionResult
 

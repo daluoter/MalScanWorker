@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     max_file_size: int = 100 * 1024 * 1024  # 100MB
 
     # Stages
-    stages_total: int = 5
+    stages_total: int = 9
 
     # ClamAV (worker-specific, optional for backend)
     clamav_host: str = "localhost"
