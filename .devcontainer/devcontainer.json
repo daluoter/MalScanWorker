@@ -1,0 +1,11 @@
+{
+  "name": "Pi Agent Development",
+
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"
+}
