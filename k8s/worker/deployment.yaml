@@ -4,7 +4,7 @@ metadata:
   name: malscan-worker
   namespace: malscan
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: malscan-worker
