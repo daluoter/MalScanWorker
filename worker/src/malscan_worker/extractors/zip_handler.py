@@ -23,7 +23,7 @@ logger = structlog.get_logger(__name__)
 
 # Optional AES support via pyzipper
 try:
-    import pyzipper  # type: ignore[import-untyped]
+    import pyzipper
 
     _HAS_PYZIPPER = True
 except ImportError:

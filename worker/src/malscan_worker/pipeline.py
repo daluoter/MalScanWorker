@@ -55,7 +55,7 @@ class _PipelineStage(Protocol):
 PARALLEL_STAGES = [
     FileTypeStage(),
     ClamAVStage(),
-    YaraStage(),  # type: ignore[no-untyped-call]
+    YaraStage(),
     IocExtractStage(),
     DeobfuscationStage(),
 ]

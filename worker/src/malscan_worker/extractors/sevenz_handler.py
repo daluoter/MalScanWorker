@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
-try:
-    import py7zr  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover - optional dependency fallback
-    py7zr = None
+if TYPE_CHECKING:
+    import py7zr
+else:
+    try:
+        import py7zr
+    except ImportError:  # pragma: no cover - optional dependency fallback
+        py7zr = None
 
 from malscan_worker.exceptions import ArchivePasswordRequiredError, ArchiveWrongPasswordError
 from malscan_worker.extractors.base import (

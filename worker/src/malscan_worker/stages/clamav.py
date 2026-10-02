@@ -20,7 +20,7 @@ def _get_clamd_client() -> pyclamd.ClamdNetworkSocket:
     )
 
 
-def _scan_stream_sync(file_content: bytes) -> dict:
+def _scan_stream_sync(file_content: bytes) -> dict[str, tuple[str, str]] | None:
     """Synchronous function to scan a stream using pyclamd."""
     cd = _get_clamd_client()
     # Check if clamd is alive
@@ -29,8 +29,9 @@ def _scan_stream_sync(file_content: bytes) -> dict:
             f"Could not ping clamd at {settings.clamav_host}:{settings.clamav_port}"
         )
 
-    # Read the file content as stream
-    return cd.scan_stream(file_content)
+    # Read the file content as stream.
+    scan_result: dict[str, tuple[str, str]] | None = cd.scan_stream(file_content)
+    return scan_result
 
 
 class ClamAVStage(Stage):
@@ -61,7 +62,7 @@ class ClamAVStage(Stage):
             infected = result is not None
             threat_name = None
 
-            if infected and "stream" in result:
+            if result is not None and "stream" in result:
                 threat_name = result["stream"][1]
 
             ended_at = datetime.now(timezone.utc)

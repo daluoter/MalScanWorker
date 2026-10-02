@@ -222,7 +222,7 @@ class IocExtractStage(Stage):
             extracted_urls = urls[:50]  # Limit to 50 URLs for sub-jobs
             sub_jobs_created = 0
 
-            if ctx.job and ctx.db and ctx.job.depth < max_depth:
+            if ctx.job and ctx.job.depth < max_depth:
                 submitter = await InternalJobSubmitter.get_instance()
 
                 for url in extracted_urls:
@@ -242,13 +242,16 @@ class IocExtractStage(Stage):
 
                         # Submit as subjob
                         await submitter.submit_subjob(
-                            db=ctx.db,
                             file_path=temp_path,
                             filename=safe_name,
                             content_type="application/internet-shortcut",
                             sha256_hash=url_sha256,
                             file_size=url_size,
-                            parent_job=ctx.job,
+                            parent_job_id=str(ctx.job.id),
+                            parent_job_depth=ctx.job.depth,
+                            root_artifact_id=ctx.root_artifact_id,
+                            root_job_id=ctx.root_job_id or ctx.job_id,
+                            ancestor_hashes=ctx.ancestor_hashes | {ctx.sha256},
                         )
                         sub_jobs_created += 1
 

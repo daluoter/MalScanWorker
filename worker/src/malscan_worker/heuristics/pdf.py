@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 
-from malscan_worker.heuristics.models import HeuristicHit, make_hit
+from malscan_worker.heuristics.models import HeuristicHit, JsonValue, make_hit
 
 _EXECUTABLE_SUFFIXES = (
     ".bat",
@@ -58,7 +58,7 @@ def build_pdf_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
                 severity="high",
                 confidence=0.89,
                 summary="PDF launch action targets an executable or command payload",
-                evidence={"targets": launch_targets},
+                evidence={"targets": list(launch_targets)},
                 tags=("pdf", "launch", "executable"),
             )
         )
@@ -74,7 +74,7 @@ def build_pdf_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
                 severity="high",
                 confidence=0.91,
                 summary="PDF contains embedded executable-like files",
-                evidence={"files": executable_embeds},
+                evidence={"files": list(executable_embeds)},
                 tags=("pdf", "embedded", "executable"),
             )
         )
@@ -121,11 +121,11 @@ def _is_executable_or_command_target(value: str) -> bool:
     return False
 
 
-def _normalize_embedded_files(value: object) -> tuple[dict[str, object], ...]:
+def _normalize_embedded_files(value: object) -> tuple[dict[str, JsonValue], ...]:
     if not isinstance(value, Sequence) or isinstance(value, str | bytes):
         return ()
 
-    normalized: dict[str, dict[str, object]] = {}
+    normalized: dict[str, dict[str, JsonValue]] = {}
     for item in value:
         if not isinstance(item, Mapping) or not bool(item.get("executable")):
             continue

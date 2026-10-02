@@ -65,7 +65,7 @@ class YaraStage(Stage):
     def name(self) -> str:
         return "yara"
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Trigger compilation on instantiation (which happens once at worker start)
         _load_yara_rules()
 

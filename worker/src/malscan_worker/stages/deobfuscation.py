@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Literal, TypedDict
@@ -133,7 +135,7 @@ class DeobfuscationStage(Stage):
                 for index, candidate in enumerate(engine_result.candidates)
             ]
 
-            findings = {
+            findings: DeobfuscationFindings = {
                 "candidates": candidate_findings,
                 "extracted_iocs": engine_result.iocs,
                 "techniques_found": sorted(
@@ -173,7 +175,7 @@ class DeobfuscationStage(Stage):
         self,
         started_at: datetime,
         status: str,
-        findings: DeobfuscationFindings,
+        findings: Mapping[str, object],
         error: str | None = None,
     ) -> StageResult:
         ended_at = datetime.now(timezone.utc)
@@ -183,7 +185,7 @@ class DeobfuscationStage(Stage):
             started_at=started_at,
             ended_at=ended_at,
             duration_ms=int((ended_at - started_at).total_seconds() * 1000),
-            findings=findings,
+            findings=dict(findings),
             artifacts=[],
             error=error,
         )
@@ -196,20 +198,33 @@ class DeobfuscationStage(Stage):
         index: int,
         max_candidate_bytes: int,
     ) -> DeobfuscationCandidateFinding:
-        candidate_dict = asdict(candidate)
-        candidate_dict["decoded_id"] = f"decoded::{artifact_ref}::{index + 1}"
-        candidate_dict["source_stage"] = "deobfuscation"
         original_length = len(candidate.content)
         serialized_bytes = candidate.content[:max_candidate_bytes]
-        candidate_dict["content_byte_length"] = original_length
-        candidate_dict["serialized_content_byte_length"] = len(serialized_bytes)
-        candidate_dict["content_truncated"] = len(serialized_bytes) < original_length
 
         try:
-            candidate_dict["content"] = serialized_bytes.decode("utf-8", errors="strict")
-            candidate_dict["content_encoding"] = "utf-8"
+            serialized_content = serialized_bytes.decode("utf-8", errors="strict")
+            content_encoding: Literal["utf-8", "base64"] = "utf-8"
         except UnicodeDecodeError:
-            candidate_dict["content"] = base64.b64encode(serialized_bytes).decode("ascii")
-            candidate_dict["content_encoding"] = "base64"
+            serialized_content = base64.b64encode(serialized_bytes).decode("ascii")
+            content_encoding = "base64"
 
-        return candidate_dict
+        return {
+            "decoded_id": f"decoded::{artifact_ref}::{index + 1}",
+            "content": serialized_content,
+            "content_encoding": content_encoding,
+            "content_byte_length": original_length,
+            "serialized_content_byte_length": len(serialized_bytes),
+            "content_truncated": len(serialized_bytes) < original_length,
+            "confidence": candidate.confidence,
+            "technique": candidate.technique,
+            "truncated": candidate.truncated,
+            "tags": candidate.tags.copy(),
+            "source_stage": "deobfuscation",
+            "provenance": {
+                "decoder": candidate.provenance.decoder,
+                "offset": candidate.provenance.offset,
+                "length": candidate.provenance.length,
+                "key": candidate.provenance.key,
+                "meta": deepcopy(candidate.provenance.meta),
+            },
+        }

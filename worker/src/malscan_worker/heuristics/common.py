@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 
-from malscan_worker.heuristics.models import HeuristicHit, make_hit
+from malscan_worker.heuristics.models import HeuristicHit, JsonValue, make_hit
 
 _ENTROPY_THRESHOLD = 7.2
 _LOLBINS = ("certutil", "mshta", "powershell", "regsvr32", "rundll32", "wmic")
@@ -31,11 +31,14 @@ def evaluate_entropy_regions(
 ) -> list[HeuristicHit]:
     """Emit a hit when multiple regions have high entropy."""
 
-    high_regions: list[dict[str, object]] = []
+    high_regions: list[dict[str, JsonValue]] = []
     for region in regions:
         entropy = region.get("entropy")
         if isinstance(entropy, int | float) and entropy >= _ENTROPY_THRESHOLD:
-            high_regions.append({"name": region.get("name"), "entropy": entropy})
+            name = region.get("name")
+            if not isinstance(name, str | int | float | bool) and name is not None:
+                name = None
+            high_regions.append({"name": name, "entropy": entropy})
 
     if len(high_regions) < 2:
         return []
@@ -113,7 +116,7 @@ def evaluate_lolbin_chain(scope: str, text: str) -> list[HeuristicHit]:
                 severity="medium",
                 confidence=0.8,
                 summary="LOLBIN appears with execution-chain context",
-                evidence={"lolbins": matched_lolbins_tuple, "signals": tuple(signals)},
+                evidence={"lolbins": list(matched_lolbins_tuple), "signals": signals},
                 tags=tuple(tags),
             )
         ]
@@ -127,7 +130,7 @@ def evaluate_lolbin_chain(scope: str, text: str) -> list[HeuristicHit]:
             severity="weak",
             confidence=0.52,
             summary="LOLBIN reference found without execution context",
-            evidence={"lolbins": matched_lolbins_tuple},
+            evidence={"lolbins": list(matched_lolbins_tuple)},
             tags=("lolbin", "reference"),
         )
     ]

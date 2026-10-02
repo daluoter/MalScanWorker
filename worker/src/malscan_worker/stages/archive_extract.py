@@ -152,7 +152,8 @@ class ArchiveExtractStage(Stage):
         ancestor_hashes = ctx.ancestor_hashes or set()
 
         # Only initialise submitter when we have a real job context
-        submitter = await InternalJobSubmitter.get_instance() if ctx.job else None
+        job = ctx.job
+        submitter = await InternalJobSubmitter.get_instance() if job else None
 
         for ef in result.files:
             # Compute SHA256
@@ -172,11 +173,11 @@ class ArchiveExtractStage(Stage):
             seen_hashes.add(file_sha256)
 
             # Create artifact record and submit sub-job only with a real job
-            if ctx.job:
+            if job:
                 art = await create_artifact(
                     parent_id=parent_artifact_id,
                     root_id=root_artifact_id,
-                    depth=ctx.job.depth + 1,
+                    depth=job.depth + 1,
                     sha256=file_sha256,
                     size=ef.size,
                     original_filename=ef.original_name,
@@ -193,7 +194,7 @@ class ArchiveExtractStage(Stage):
                 continue
 
             # Submit sub-job
-            if submitter:
+            if submitter and job:
                 try:
                     sub_job_id = await submitter.submit_subjob(
                         file_path=ef.path,
@@ -201,8 +202,8 @@ class ArchiveExtractStage(Stage):
                         content_type="application/octet-stream",
                         sha256_hash=file_sha256,
                         file_size=ef.size,
-                        parent_job_id=str(ctx.job.id),
-                        parent_job_depth=ctx.job.depth,
+                        parent_job_id=str(job.id),
+                        parent_job_depth=job.depth,
                         artifact_id=art["id"],
                         root_artifact_id=root_artifact_id,
                         root_job_id=root_job_id,

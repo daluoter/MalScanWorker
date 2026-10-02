@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from malscan_worker.heuristics.common import evaluate_entropy_regions
-from malscan_worker.heuristics.models import HeuristicHit, make_hit
+from malscan_worker.heuristics.models import HeuristicHit, JsonValue, make_hit
 
 _INJECTION_APIS = frozenset({"createremotethread", "virtualallocex", "writeprocessmemory"})
 _SPARSE_IMPORT_DLL_THRESHOLD = 1
@@ -21,7 +21,10 @@ def build_pe_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
     sections = _as_mapping_list(features.get("sections"))
     imports = _as_mapping_list(features.get("imports"))
     packer_clues = _as_mapping_list(features.get("packer_clues"))
-    overlay = features.get("overlay") if isinstance(features.get("overlay"), Mapping) else {}
+    overlay_value = features.get("overlay")
+    overlay: Mapping[str, object] = (
+        overlay_value if isinstance(overlay_value, Mapping) else {}
+    )
 
     entropy_hits = evaluate_entropy_regions(scope="pe", regions=sections)
     heuristics.extend(entropy_hits)
@@ -62,7 +65,7 @@ def build_pe_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
                 evidence={
                     "import_dll_count": len(imports),
                     "import_symbol_count": len(imported_symbols),
-                    "entropy_regions": high_entropy_regions,
+                    "entropy_regions": list(high_entropy_regions),
                 },
                 tags=("packer", "entropy", "imports"),
             )
@@ -84,8 +87,14 @@ def build_pe_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
             )
         )
 
-    overlay_size = overlay.get("size") if isinstance(overlay, Mapping) else None
-    overlay_present = bool(overlay.get("present")) if isinstance(overlay, Mapping) else False
+    overlay_size = overlay.get("size")
+    overlay_present = bool(overlay.get("present"))
+    offset = overlay.get("offset")
+    if not isinstance(offset, str | int | float | bool) and offset is not None:
+        offset = None
+    file_size = overlay.get("file_size")
+    if not isinstance(file_size, str | int | float | bool) and file_size is not None:
+        file_size = None
     if (
         overlay_present
         and isinstance(overlay_size, int)
@@ -102,8 +111,8 @@ def build_pe_heuristics(features: Mapping[str, object]) -> list[HeuristicHit]:
                 summary="Large PE overlay data is present",
                 evidence={
                     "size": overlay_size,
-                    "offset": overlay.get("offset"),
-                    "file_size": overlay.get("file_size"),
+                    "offset": offset,
+                    "file_size": file_size,
                 },
                 tags=("overlay", "structure"),
             )
@@ -132,9 +141,11 @@ def _extract_imported_functions(imports: Sequence[Mapping[str, object]]) -> set[
 
 def _extract_entropy_regions(
     entropy_hits: Sequence[HeuristicHit],
-) -> tuple[Mapping[str, object], ...]:
+) -> tuple[Mapping[str, JsonValue], ...]:
     for hit in entropy_hits:
         if hit.key != "entropy.high_region_cluster":
+            continue
+        if not isinstance(hit.evidence, Mapping):
             continue
         regions = hit.evidence.get("regions")
         if isinstance(regions, tuple):

@@ -8,7 +8,7 @@ from pathlib import Path
 import structlog
 
 try:
-    import rarfile  # type: ignore[import-untyped]
+    import rarfile
 except ImportError:  # pragma: no cover - optional dependency fallback
     rarfile = None
 

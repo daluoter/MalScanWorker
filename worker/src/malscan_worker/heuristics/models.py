@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TypeAlias
 
 JsonScalar: TypeAlias = str | int | float | bool | None
 FrozenJsonValue: TypeAlias = (
-    JsonScalar | tuple["FrozenJsonValue", ...] | MappingProxyType[str, "FrozenJsonValue"]
+    JsonScalar | tuple["FrozenJsonValue", ...] | Mapping[str, "FrozenJsonValue"]
 )
-JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
+JsonValue: TypeAlias = JsonScalar | Sequence["JsonValue"] | Mapping[str, "JsonValue"]
 
 
-def _freeze_json(value: JsonValue) -> FrozenJsonValue:
-    if isinstance(value, dict):
+def _freeze_json(value: JsonValue | FrozenJsonValue) -> FrozenJsonValue:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+
+    if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
 
-    if isinstance(value, list):
+    if isinstance(value, Sequence):
         return tuple(_freeze_json(item) for item in value)
 
     return value
@@ -63,6 +67,6 @@ def make_hit(
         severity=severity,
         confidence=confidence,
         summary=summary,
-        evidence={} if evidence is None else evidence,
+        evidence=_freeze_json({} if evidence is None else evidence),
         tags=tags,
     )

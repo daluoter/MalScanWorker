@@ -402,7 +402,10 @@ class DocumentAnalysisStage(Stage):
         artifacts: list[dict[str, Any]],
         extract_dir: Path,
     ) -> None:
-        raw = ctx.file_path.read_bytes()
+        file_path = ctx.file_path
+        if file_path is None:
+            raise FileNotFoundError("File not found")
+        raw = file_path.read_bytes()
 
         # 1. Structural scan for suspicious control words
         for ctrl in RTF_SUSPICIOUS_CONTROLS:
@@ -595,7 +598,10 @@ class DocumentAnalysisStage(Stage):
         artifacts: list[dict[str, Any]],
         extract_dir: Path,
     ) -> None:
-        raw = ctx.file_path.read_bytes()
+        file_path = ctx.file_path
+        if file_path is None:
+            raise FileNotFoundError("File not found")
+        raw = file_path.read_bytes()
 
         # 1. oleid indicators
         if HAS_OLEID:
@@ -780,7 +786,11 @@ class DocumentAnalysisStage(Stage):
         """Parse OOXML (ZIP-based Office) for external links, macros, embedded OLE."""
         import zipfile
 
-        if not zipfile.is_zipfile(ctx.file_path):
+        file_path = ctx.file_path
+        if file_path is None:
+            raise FileNotFoundError("File not found")
+
+        if not zipfile.is_zipfile(file_path):
             findings["errors"].append("OOXML file failed ZIP validation")
             return
 
@@ -788,7 +798,7 @@ class DocumentAnalysisStage(Stage):
         embedded_bins: list[str] = []
 
         try:
-            with zipfile.ZipFile(ctx.file_path, "r") as zf:
+            with zipfile.ZipFile(file_path, "r") as zf:
                 names = zf.namelist()
 
                 # Check for vbaProject.bin → macros present
@@ -1100,7 +1110,8 @@ class DocumentAnalysisStage(Stage):
         """Pull MIME from the file-type stage result."""
         for r in ctx.previous_results:
             if r.stage_name == "file-type":
-                return r.findings.get("mime_type", "")
+                mime_type = r.findings.get("mime_type", "")
+                return mime_type if isinstance(mime_type, str) else ""
         return ""
 
     def _result(self, started_at: datetime, status: str, findings: dict[str, Any]) -> StageResult:
