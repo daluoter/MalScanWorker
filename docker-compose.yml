@@ -100,6 +100,7 @@ services:
       RABBITMQ_SANDBOX_QUEUE: malscan.jobs.sandbox
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-mock}
       SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-}
       SANDBOX_API_TOKEN: ${SANDBOX_API_TOKEN:-}
@@ -113,6 +114,7 @@ services:
       - clamav
 
   sandbox-worker:
+    profiles: [sandbox]
     build:
       context: ./worker
       dockerfile: Dockerfile
@@ -126,6 +128,7 @@ services:
       RABBITMQ_SANDBOX_QUEUE: malscan.jobs.sandbox
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
+      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-mock}
       SANDBOX_BASE_URL: ${SANDBOX_BASE_URL:-}
       SANDBOX_API_TOKEN: ${SANDBOX_API_TOKEN:-}

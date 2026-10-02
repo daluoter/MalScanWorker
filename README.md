@@ -366,6 +366,8 @@ poetry run python -m malscan_worker.sandbox_main
 docker compose up -d --build
 ```
 
+此指令使用預設 Compose 設定：啟動靜態掃描 worker，但不啟動選用的 `sandbox-worker`。動態沙箱的啟動方式請參考下方「動態沙箱整合」中的 Docker Compose 說明。
+
 ---
 
 ## 密碼保護與遞迴壓縮檔分析
@@ -640,11 +642,19 @@ Worker 新增了 `format-analysis` 階段，提供格式專用（format-specific
 
 ### Docker Compose
 
-- `worker`：原本靜態/遞迴分析 worker
-- `sandbox-worker`：專責消費 `malscan.jobs.sandbox`
-- 兩個 worker 都會啟動自己的 metrics server；部署/監控時應分別抓取兩個 service，而不是假設只有單一 worker target
+- **免費／僅靜態掃描（預設）**：執行 `docker compose up -d`。一般 `worker` 會處理靜態/遞迴分析；`SANDBOX_ENABLED` 預設為 `false`，且不會啟動 `sandbox-worker`。
+- **選用動態沙箱**：在專案根目錄的 `.env` 設定下列值，並以自己的 CAPEv2 動態分析基礎設施提供可連線的 endpoint 和 API token（Compose 不會建立或代管這些基礎設施）：
 
-啟動後可透過相同 API 查 job/report；差異只在於 `done` 會延後到 sandbox backfill 完成。
+  ```dotenv
+  SANDBOX_ENABLED=true
+  SANDBOX_PROVIDER=capev2
+  SANDBOX_BASE_URL=<your CAPEv2 endpoint>
+  SANDBOX_API_TOKEN=<your CAPEv2 API token>
+  ```
+
+  請將 endpoint 和 token placeholder 換成你自行提供的值，再執行 `docker compose --profile sandbox up -d`。這會額外啟動 `sandbox-worker`，由它專責消費 `malscan.jobs.sandbox`；沒有 sandbox profile 時不會啟動這個 service。
+
+一般 `worker` 與 `sandbox-worker` 都會啟動自己的 metrics server；部署/監控時應分別抓取兩個 service，而不是假設只有單一 worker target。啟動後可透過相同 API 查 job/report；使用動態沙箱時，`done` 會延後到 sandbox backfill 完成。
 
 ---
 
