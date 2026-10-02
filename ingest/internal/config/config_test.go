@@ -46,8 +46,8 @@ func TestConfigDefaults(t *testing.T) {
 	if cfg.Port != 8080 {
 		t.Errorf("Port = %d, want %d", cfg.Port, 8080)
 	}
-	if cfg.StagesTotal != 5 {
-		t.Errorf("StagesTotal = %d, want %d", cfg.StagesTotal, 5)
+	if cfg.StagesTotal != 9 {
+		t.Errorf("StagesTotal = %d, want %d", cfg.StagesTotal, 9)
 	}
 }
 

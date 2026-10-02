@@ -12,7 +12,7 @@ data:
   RABBITMQ_QUEUE: "malscan.jobs"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
-  STAGES_TOTAL: "5"
+  STAGES_TOTAL: "9"
   SANDBOX_ENABLED: "false"
   # Legacy provider fallback only; when sandbox is disabled, mock analysis is not run.
   SANDBOX_MOCK: "true"

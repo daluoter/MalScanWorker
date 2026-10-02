@@ -28,7 +28,7 @@ type Config struct {
 	CORSOrigins   string `env:"CORS_ORIGINS"            envDefault:"*"`
 	LogLevel      string `env:"LOG_LEVEL"               envDefault:"INFO"`
 	Port          int    `env:"PORT"                    envDefault:"8080"`
-	StagesTotal   int    `env:"STAGES_TOTAL"            envDefault:"5"`
+	StagesTotal   int    `env:"STAGES_TOTAL"            envDefault:"9"`
 
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
 }
