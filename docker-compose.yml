@@ -154,6 +154,9 @@ services:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       PORT: 8080
       LOG_LEVEL: INFO
+      UPLOAD_RATE_LIMIT_ENABLED: ${UPLOAD_RATE_LIMIT_ENABLED:-true}
+      UPLOAD_RATE_LIMIT_RPM: ${UPLOAD_RATE_LIMIT_RPM:-6}
+      UPLOAD_RATE_LIMIT_BURST: ${UPLOAD_RATE_LIMIT_BURST:-2}
     depends_on:
       postgres:
         condition: service_healthy

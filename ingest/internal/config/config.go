@@ -30,6 +30,10 @@ type Config struct {
 	Port          int    `env:"PORT"                    envDefault:"8080"`
 	StagesTotal   int    `env:"STAGES_TOTAL"            envDefault:"9"`
 
+	UploadRateLimitEnabled bool `env:"UPLOAD_RATE_LIMIT_ENABLED" envDefault:"true"`
+	UploadRateLimitRPM     int  `env:"UPLOAD_RATE_LIMIT_RPM"     envDefault:"6"`
+	UploadRateLimitBurst   int  `env:"UPLOAD_RATE_LIMIT_BURST"   envDefault:"2"`
+
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
 }
 
@@ -45,6 +49,9 @@ func Load() (*Config, error) {
 	cfg := &Config{}
 	if err := env.Parse(cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.UploadRateLimitEnabled && (cfg.UploadRateLimitRPM <= 0 || cfg.UploadRateLimitBurst <= 0) {
+		return nil, fmt.Errorf("validate config: UPLOAD_RATE_LIMIT_RPM and UPLOAD_RATE_LIMIT_BURST must be positive when upload rate limiting is enabled")
 	}
 
 	// Strip SQLAlchemy asyncpg dialect: "postgresql+asyncpg://" → "postgresql://"

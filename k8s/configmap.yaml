@@ -13,6 +13,9 @@ data:
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   STAGES_TOTAL: "9"
+  UPLOAD_RATE_LIMIT_ENABLED: "true"
+  UPLOAD_RATE_LIMIT_RPM: "6"
+  UPLOAD_RATE_LIMIT_BURST: "2"
   SANDBOX_ENABLED: "false"
   # Legacy provider fallback only; when sandbox is disabled, mock analysis is not run.
   SANDBOX_MOCK: "true"

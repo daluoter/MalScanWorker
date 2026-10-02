@@ -331,6 +331,8 @@ cd ingest
 go run ./cmd/ingest
 ```
 
+Ingest defaults to **6 uploads per minute** with a burst of **2**. Configure it with `UPLOAD_RATE_LIMIT_ENABLED`, `UPLOAD_RATE_LIMIT_RPM`, and `UPLOAD_RATE_LIMIT_BURST`. The in-memory limit applies per ingest process; multiple replicas each have their own bucket, so use distributed or edge limiting if a shared cluster-wide limit is required.
+
 ### 5. Start the Backend
 ```bash
 cd backend

@@ -2,11 +2,13 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	gocors "github.com/go-chi/cors"
+	"golang.org/x/time/rate"
 
 	"github.com/daluoter/malscan-ingest/internal/health"
 	"github.com/daluoter/malscan-ingest/internal/upload"
@@ -16,11 +18,18 @@ import (
 // Aborts before multipart parsing for clearly oversized requests (UPLOAD-04).
 const maxRequestBody int64 = 150 * 1024 * 1024
 
+// UploadRateLimit configures the process-local upload token bucket.
+type UploadRateLimit struct {
+	Enabled bool
+	RPM     int
+	Burst   int
+}
+
 // NewRouter creates a chi router with CORS, health check, and upload routes.
 // corsOrigins configures allowed origins: "*" for wildcard, or comma-separated
 // list of origins (e.g. "http://localhost:3000,http://example.com").
 // Matches Python FastAPI CORSMiddleware configuration exactly (main.py lines 34-52).
-func NewRouter(checker *health.Checker, uploadHandler *upload.Handler, corsOrigins string) *chi.Mux {
+func NewRouter(checker *health.Checker, uploadHandler http.Handler, corsOrigins string, uploadRateLimit UploadRateLimit) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Parse CORS origins matching Python: main.py lines 35-38
@@ -54,8 +63,9 @@ func NewRouter(checker *health.Checker, uploadHandler *upload.Handler, corsOrigi
 		r.Get("/healthz", checker.Handle)
 	}
 
-	// Upload endpoint with MaxBytesReader (Phase 2)
-	r.Post("/api/v1/files", func(w http.ResponseWriter, req *http.Request) {
+	// Upload endpoint with MaxBytesReader (Phase 2). The limiter wraps the
+	// route so rejected requests do not reach MaxBytesReader or the handler.
+	var uploadRoute http.Handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if uploadHandler == nil {
 			http.Error(w, "upload handler not configured", http.StatusInternalServerError)
 			return
@@ -63,6 +73,42 @@ func NewRouter(checker *health.Checker, uploadHandler *upload.Handler, corsOrigi
 		req.Body = http.MaxBytesReader(w, req.Body, maxRequestBody)
 		uploadHandler.ServeHTTP(w, req)
 	})
+	if uploadRateLimit.Enabled {
+		limiter, retryAfter := newUploadRateLimiter(uploadRateLimit)
+		uploadRoute = uploadRateLimitMiddleware(uploadRoute, limiter, retryAfter)
+	}
+	r.Post("/api/v1/files", uploadRoute.ServeHTTP)
 
 	return r
+}
+
+func newUploadRateLimiter(cfg UploadRateLimit) (*rate.Limiter, string) {
+	limiter := rate.NewLimiter(rate.Limit(float64(cfg.RPM)/60), cfg.Burst)
+	return limiter, retryAfter(cfg.RPM)
+}
+
+func retryAfter(rpm int) string {
+	if rpm <= 0 {
+		return "1"
+	}
+	seconds := 60 / rpm
+	if 60%rpm != 0 {
+		seconds++
+	}
+	if seconds < 1 {
+		seconds = 1
+	}
+	return strconv.Itoa(seconds)
+}
+
+func uploadRateLimitMiddleware(next http.Handler, limiter *rate.Limiter, retryAfter string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if limiter.Allow() {
+			next.ServeHTTP(w, req)
+			return
+		}
+		w.Header().Set("Retry-After", retryAfter)
+		upload.WriteError(w, http.StatusTooManyRequests, upload.CodeRateLimitExceeded,
+			"Upload rate limit exceeded. Please try again later.", nil)
+	})
 }

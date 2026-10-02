@@ -14,6 +14,10 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("MINIO_ACCESS_KEY", "minioaccess")
 	t.Setenv("MINIO_SECRET_KEY", "miniosecret")
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+	for _, key := range []string{"UPLOAD_RATE_LIMIT_ENABLED", "UPLOAD_RATE_LIMIT_RPM", "UPLOAD_RATE_LIMIT_BURST"} {
+		t.Setenv(key, "")
+		os.Unsetenv(key)
+	}
 }
 
 func TestConfigDefaults(t *testing.T) {
@@ -48,6 +52,68 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.StagesTotal != 9 {
 		t.Errorf("StagesTotal = %d, want %d", cfg.StagesTotal, 9)
+	}
+	if !cfg.UploadRateLimitEnabled {
+		t.Errorf("UploadRateLimitEnabled = false, want true")
+	}
+	if cfg.UploadRateLimitRPM != 6 {
+		t.Errorf("UploadRateLimitRPM = %d, want 6", cfg.UploadRateLimitRPM)
+	}
+	if cfg.UploadRateLimitBurst != 2 {
+		t.Errorf("UploadRateLimitBurst = %d, want 2", cfg.UploadRateLimitBurst)
+	}
+}
+
+func TestUploadRateLimitConfigOverrides(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("UPLOAD_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("UPLOAD_RATE_LIMIT_RPM", "15")
+	t.Setenv("UPLOAD_RATE_LIMIT_BURST", "4")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.UploadRateLimitEnabled || cfg.UploadRateLimitRPM != 15 || cfg.UploadRateLimitBurst != 4 {
+		t.Errorf("upload rate limit config = (%v, %d, %d), want (false, 15, 4)", cfg.UploadRateLimitEnabled, cfg.UploadRateLimitRPM, cfg.UploadRateLimitBurst)
+	}
+}
+
+func TestUploadRateLimitConfigRequiresPositiveValuesWhenEnabled(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		rpm   string
+		burst string
+	}{
+		{name: "nonpositive RPM", rpm: "0", burst: "2"},
+		{name: "negative RPM", rpm: "-1", burst: "2"},
+		{name: "zero burst", rpm: "6", burst: "0"},
+		{name: "negative burst", rpm: "6", burst: "-1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("UPLOAD_RATE_LIMIT_ENABLED", "true")
+			t.Setenv("UPLOAD_RATE_LIMIT_RPM", tt.rpm)
+			t.Setenv("UPLOAD_RATE_LIMIT_BURST", tt.burst)
+			if _, err := Load(); err == nil {
+				t.Fatal("Load() returned nil error, want validation error")
+			}
+		})
+	}
+}
+
+func TestUploadRateLimitDisabledAllowsNonpositiveValues(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("UPLOAD_RATE_LIMIT_ENABLED", "false")
+	t.Setenv("UPLOAD_RATE_LIMIT_RPM", "0")
+	t.Setenv("UPLOAD_RATE_LIMIT_BURST", "-1")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error with disabled limiter: %v", err)
+	}
+	if cfg.UploadRateLimitRPM != 0 || cfg.UploadRateLimitBurst != -1 {
+		t.Errorf("disabled limiter settings = (%d, %d), want (0, -1)", cfg.UploadRateLimitRPM, cfg.UploadRateLimitBurst)
 	}
 }
 

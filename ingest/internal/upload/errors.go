@@ -14,6 +14,7 @@ const (
 	CodeStorageError       = "STORAGE_ERROR"
 	CodeQueueUnavailable   = "QUEUE_UNAVAILABLE"
 	CodeQueuePublishFailed = "QUEUE_PUBLISH_FAILED"
+	CodeRateLimitExceeded  = "RATE_LIMIT_EXCEEDED"
 )
 
 // ApiError represents a single error with code, message, and optional details.

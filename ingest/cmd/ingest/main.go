@@ -80,7 +80,11 @@ func run() error {
 	// Setup router with health and upload endpoints
 	checker := health.NewChecker(pool, minioClient, amqpConn, cfg.MinioBucket)
 	uploadHandler := upload.NewHandler(minioClient, dbStore, pub, cfg.MinioBucket, cfg.MaxFileSize, slog.Default())
-	r := server.NewRouter(checker, uploadHandler, cfg.CORSOrigins)
+	r := server.NewRouter(checker, uploadHandler, cfg.CORSOrigins, server.UploadRateLimit{
+		Enabled: cfg.UploadRateLimitEnabled,
+		RPM:     cfg.UploadRateLimitRPM,
+		Burst:   cfg.UploadRateLimitBurst,
+	})
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

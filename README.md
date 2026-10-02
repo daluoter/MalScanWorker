@@ -341,6 +341,8 @@ cd ingest
 go run ./cmd/ingest
 ```
 
+Ingest 預設每分鐘允許 **6 次上傳**，突發上限為 **2 次**。可透過 `UPLOAD_RATE_LIMIT_ENABLED`、`UPLOAD_RATE_LIMIT_RPM` 和 `UPLOAD_RATE_LIMIT_BURST` 設定。此記憶體內限制適用於單一 ingest 程序；多個 replicas 各自使用獨立的 token bucket。若需要整個叢集共用限制，請使用分散式或邊緣限流。
+
 ### 5. 啟動後端
 ```bash
 cd backend
