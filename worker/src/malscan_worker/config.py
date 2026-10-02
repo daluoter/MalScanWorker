@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     clamav_port: int = 3310
 
     # Sandbox
-    sandbox_enabled: bool = True
+    sandbox_enabled: bool = False
     sandbox_mock: bool = True
     sandbox_provider: str = "mock"
     sandbox_base_url: str = ""
