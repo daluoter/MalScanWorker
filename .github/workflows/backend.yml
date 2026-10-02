@@ -40,10 +40,10 @@ jobs:
         run: poetry run ruff check .
 
       - name: Type check (mypy)
-        run: poetry run mypy src/ || true  # Allow failures during initial setup
+        run: poetry run mypy src/
 
       - name: Test
-        run: poetry run pytest tests/ -v --cov || true  # Allow failures if no tests yet
+        run: poetry run pytest tests/ -v --cov
 
   build-push:
     runs-on: ubuntu-latest
