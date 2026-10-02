@@ -176,6 +176,8 @@ sudo kubectl apply -f k8s/worker/
 sudo kubectl apply -f k8s/nginx/
 ```
 
+預設 Kubernetes 部署僅執行靜態分析：`k8s/configmap.yaml` 將 `SANDBOX_ENABLED` 設為 `false`，因此 sandbox stage 會略過，不會執行 mock 或等待動態分析。選用的 CAPE 動態分析需要使用者自行提供 CAPE 基礎設施，並另外部署會消費 sandbox queue 的 sandbox worker；本 Kubernetes manifests 不包含該 consumer Deployment。
+
 #### 5.6 驗證部署
 ```bash
 sudo kubectl get pods -n malscan
