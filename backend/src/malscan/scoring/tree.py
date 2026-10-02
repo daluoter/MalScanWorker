@@ -31,7 +31,7 @@ def merge_with_descendants(
     local: RiskDecision,
     descendants: list[dict[str, Any]],
 ) -> RiskDecision:
-    seen_hashes: set[str] = set()
+    seen_hashes: set[object] = set()
     top_descendants: list[dict[str, Any]] = []
     branch_scores: list[int] = []
     descendant_components: list[dict[str, Any]] = []

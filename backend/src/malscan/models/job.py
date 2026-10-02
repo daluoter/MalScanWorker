@@ -3,12 +3,16 @@
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from malscan.models.base import Base
+
+if TYPE_CHECKING:
+    from malscan.models.file import File
 
 
 class JobStatus(str, Enum):
@@ -38,7 +42,7 @@ class Job(Base):
     stages_total: Mapped[int] = mapped_column(Integer, nullable=False, default=9)
     password_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
@@ -69,7 +73,7 @@ class Job(Base):
     )
 
     # Relationships
-    file: Mapped["File"] = relationship("File", back_populates="jobs")  # noqa: F821
+    file: Mapped["File"] = relationship("File", back_populates="jobs")
     parent: Mapped["Job | None"] = relationship(
         "Job", back_populates="sub_jobs", remote_side="Job.id"
     )

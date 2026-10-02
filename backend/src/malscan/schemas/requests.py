@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+JobStatusLiteral = Literal["queued", "scanning", "password_required", "done", "failed"]
+
 
 class UploadResponse(BaseModel):
     """Response for POST /files."""
@@ -31,7 +33,7 @@ class JobStatusResponse(BaseModel):
     job_id: str
     parent_job_id: str | None = None
     depth: int = 0
-    status: Literal["queued", "scanning", "password_required", "done", "failed"]
+    status: JobStatusLiteral
     password_attempts: int
     password_attempts_remaining: int
     progress: JobProgress
@@ -313,7 +315,7 @@ class ApiError(BaseModel):
 
     code: str
     message: str
-    details: dict | None = None
+    details: dict[str, Any] | None = None
 
 
 class ApiErrorResponse(BaseModel):

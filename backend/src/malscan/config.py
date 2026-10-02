@@ -51,4 +51,10 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    # BaseSettings' class constructor typing cannot express that model fields are
+    # populated by its environment sources, though those sources run at runtime.
+    settings_class: type[BaseSettings] = Settings
+    settings = settings_class()
+    if not isinstance(settings, Settings):
+        raise TypeError("Settings factory returned an unexpected type")
+    return settings

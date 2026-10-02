@@ -393,7 +393,7 @@ def _append_sandbox(
         network_connections = list(finding.get("tcp_udp", []))
     behavior_types = {str(behavior.get("type", "")) for behavior in behaviors}
     if behavior_types & SANDBOX_CONFIRMED_BEHAVIORS:
-        raw_payload = {
+        raw_payload: dict[str, object] = {
             "behaviors": behaviors,
             "network_connections": network_connections,
         }

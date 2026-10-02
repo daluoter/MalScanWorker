@@ -2,12 +2,16 @@
 
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from malscan.models.base import Base
+
+if TYPE_CHECKING:
+    from malscan.models.job import Job
 
 
 class File(Base):
@@ -25,4 +29,4 @@ class File(Base):
     )
 
     # Relationship to jobs
-    jobs: Mapped[list["Job"]] = relationship("Job", back_populates="file")  # noqa: F821
+    jobs: Mapped[list["Job"]] = relationship("Job", back_populates="file")

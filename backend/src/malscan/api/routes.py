@@ -5,7 +5,9 @@ import hashlib
 import os
 import tempfile
 import uuid
-from typing import Any
+from collections.abc import AsyncGenerator
+from datetime import datetime
+from typing import Any, TypeAlias
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -21,6 +23,8 @@ from malscan.models.artifact import Artifact
 from malscan.queue import publish_job
 from malscan.report_explainability import build_explainability, ensure_artifact_tree_root
 from malscan.schemas.requests import (
+    JobProgress,
+    JobStatusLiteral,
     JobStatusResponse,
     PasswordSubmitRequest,
     PasswordSubmitResponse,
@@ -37,6 +41,25 @@ settings = get_settings()
 log = structlog.get_logger()
 
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks
+
+JsonValue: TypeAlias = (
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+)
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+def _response_job_status(status: str) -> JobStatusLiteral:
+    if status == "queued":
+        return "queued"
+    if status == "scanning":
+        return "scanning"
+    if status == "password_required":
+        return "password_required"
+    if status == "done":
+        return "done"
+    if status == "failed":
+        return "failed"
+    raise ValueError(f"Unsupported job status: {status}")
 
 
 def _risk_level_from_score(score: int) -> str:
@@ -431,9 +454,9 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
                 os.remove(temp_path)
 
         # Check for existing file by SHA256 (deduplication)
-        stmt = select(File).where(File.sha256 == sha256_hash)
-        result = await db.execute(stmt)
-        existing_file = result.scalar_one_or_none()
+        file_stmt = select(File).where(File.sha256 == sha256_hash)
+        file_result = await db.execute(file_stmt)
+        existing_file = file_result.scalar_one_or_none()
 
         if existing_file:
             file_record = existing_file
@@ -501,7 +524,7 @@ async def upload_file(request: Request, db: AsyncSession = Depends(get_db)) -> U
             job_id=str(job_record.id),
             file_id=str(file_record.id),
             sha256=sha256_hash,
-            status=job_record.status,
+            status="queued",
             created_at=job_record.created_at,
         )
 
@@ -550,15 +573,15 @@ async def get_job_status(job_id: str, db: AsyncSession = Depends(get_db)) -> Job
         job_id=str(job.id),
         parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
         depth=job.depth,
-        status=job.status,
+        status=_response_job_status(job.status),
         password_attempts=job.password_attempts,
         password_attempts_remaining=max(0, 3 - job.password_attempts),
-        progress={
-            "current_stage": job.current_stage,
-            "stages_done": job.stages_done,
-            "stages_total": job.stages_total,
-            "percent": percent,
-        },
+        progress=JobProgress(
+            current_stage=job.current_stage,
+            stages_done=job.stages_done,
+            stages_total=job.stages_total,
+            percent=percent,
+        ),
         updated_at=job.updated_at,
         error_message=job.error_message,
         total_sub=job.total_sub,
@@ -638,7 +661,7 @@ async def submit_job_password(
 
 
 @router.get("/jobs/{job_id}/stream")
-async def stream_job_status(job_id: str, request: Request):
+async def stream_job_status(job_id: str, request: Request) -> EventSourceResponse:
     """
     Stream the status of a job using Server-Sent Events (SSE).
     """
@@ -658,9 +681,9 @@ async def stream_job_status(job_id: str, request: Request):
         if result.scalar_one_or_none() is None:
             raise HTTPException(status_code=404, detail="Job not found")
 
-    async def event_generator():
-        last_updated_at = None
-        last_status = None
+    async def event_generator() -> AsyncGenerator[dict[str, str], None]:
+        last_updated_at: datetime | None = None
+        last_status: str | None = None
         session_factory = get_session_factory()
 
         try:
@@ -694,15 +717,15 @@ async def stream_job_status(job_id: str, request: Request):
                             job_id=str(job.id),
                             parent_job_id=str(job.parent_job_id) if job.parent_job_id else None,
                             depth=job.depth,
-                            status=job.status,
+                            status=_response_job_status(job.status),
                             password_attempts=job.password_attempts,
                             password_attempts_remaining=max(0, 3 - job.password_attempts),
-                            progress={
-                                "current_stage": job.current_stage,
-                                "stages_done": job.stages_done,
-                                "stages_total": job.stages_total,
-                                "percent": percent,
-                            },
+                            progress=JobProgress(
+                                current_stage=job.current_stage,
+                                stages_done=job.stages_done,
+                                stages_total=job.stages_total,
+                                percent=percent,
+                            ),
                             updated_at=job.updated_at,
                             error_message=job.error_message,
                             total_sub=job.total_sub,
@@ -725,7 +748,7 @@ async def stream_job_status(job_id: str, request: Request):
     return EventSourceResponse(event_generator())
 
 
-async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | None:
+async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> JsonObject | None:
     """Build hierarchical artifact tree from flat records."""
     from uuid import UUID
 
@@ -740,11 +763,11 @@ async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | Non
     if not artifacts:
         return None
 
-    nodes: dict[str, dict] = {}
-    root = None
-    extra_roots: list[dict[str, Any]] = []
+    nodes: dict[str, JsonObject] = {}
+    root: JsonObject | None = None
+    extra_roots: list[JsonObject] = []
     for art in artifacts:
-        node = {
+        node: JsonObject = {
             "id": str(art.id),
             "filename": art.original_filename,
             "sha256": art.sha256,
@@ -765,7 +788,9 @@ async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | Non
         }
         nodes[str(art.id)] = node
         if art.parent_id and str(art.parent_id) in nodes:
-            nodes[str(art.parent_id)]["children"].append(node)
+            children = nodes[str(art.parent_id)]["children"]
+            assert isinstance(children, list)
+            children.append(node)
         if art.depth == 0:
             if root is None:
                 root = node
@@ -774,7 +799,9 @@ async def _build_artifact_tree(root_job_id: str, db: AsyncSession) -> dict | Non
                 extra_roots.append(node)
 
     if root is not None and extra_roots:
-        root["children"].extend(extra_roots)
+        children = root["children"]
+        assert isinstance(children, list)
+        children.extend(extra_roots)
 
     return root
 

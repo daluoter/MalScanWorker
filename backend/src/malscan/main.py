@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from malscan.api.routes import router
 from malscan.config import get_settings
@@ -69,7 +70,7 @@ async def readiness_check() -> dict[str, str]:
     return {"status": "ready"}
 
 
-async def _ensure_schema_compatibility(conn) -> None:
+async def _ensure_schema_compatibility(conn: AsyncConnection) -> None:
     has_artifact_id = (
         await conn.execute(
             text(

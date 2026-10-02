@@ -2,12 +2,16 @@
 
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from malscan.models.base import Base
+
+if TYPE_CHECKING:
+    from malscan.models.job import Job
 
 
 class Artifact(Base):
@@ -83,6 +87,4 @@ class Artifact(Base):
         cascade="all, delete-orphan",
         foreign_keys=[parent_id],
     )
-    job: Mapped["Job | None"] = relationship(  # noqa: F821
-        "Job", foreign_keys=[job_id]
-    )
+    job: Mapped["Job | None"] = relationship("Job", foreign_keys=[job_id])
