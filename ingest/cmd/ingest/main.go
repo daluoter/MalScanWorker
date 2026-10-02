@@ -84,6 +84,9 @@ func run() error {
 		Enabled: cfg.UploadRateLimitEnabled,
 		RPM:     cfg.UploadRateLimitRPM,
 		Burst:   cfg.UploadRateLimitBurst,
+	}, server.UploadAuth{
+		Enabled: cfg.UploadAuthEnabled,
+		APIKey:  cfg.UploadAPIKey,
 	})
 
 	srv := &http.Server{

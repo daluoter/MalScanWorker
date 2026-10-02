@@ -12,7 +12,7 @@ import (
 // TestCORSPreflightWildcard verifies OPTIONS preflight returns proper CORS headers
 // when origins are set to wildcard "*".
 func TestCORSPreflightWildcard(t *testing.T) {
-	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{})
+	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{}, server.UploadAuth{})
 
 	req := httptest.NewRequest("OPTIONS", "/api/v1/files", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
@@ -40,7 +40,7 @@ func TestCORSPreflightWildcard(t *testing.T) {
 // TestCORSPreflightSpecificOrigins verifies that when specific origins are configured,
 // only matching origins are reflected back.
 func TestCORSPreflightSpecificOrigins(t *testing.T) {
-	r := server.NewRouter(nil, nil, "http://localhost:3000,http://example.com", server.UploadRateLimit{})
+	r := server.NewRouter(nil, nil, "http://localhost:3000,http://example.com", server.UploadRateLimit{}, server.UploadAuth{})
 
 	tests := []struct {
 		name       string
@@ -83,7 +83,7 @@ func TestCORSPreflightSpecificOrigins(t *testing.T) {
 // TestCORSAllowedMethods verifies each configured method is accepted by preflight.
 // go-chi/cors echoes back the requested method (not all), so we test each individually.
 func TestCORSAllowedMethods(t *testing.T) {
-	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{})
+	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{}, server.UploadAuth{})
 
 	for _, method := range []string{"GET", "POST", "PUT", "DELETE", "PATCH"} {
 		t.Run(method, func(t *testing.T) {
@@ -104,7 +104,7 @@ func TestCORSAllowedMethods(t *testing.T) {
 
 // TestCORSActualRequest verifies CORS headers on actual POST requests.
 func TestCORSActualRequest(t *testing.T) {
-	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{})
+	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{}, server.UploadAuth{})
 
 	// POST to /api/v1/files with Origin header — will fail at handler (nil),
 	// but CORS headers should still be present before handler runs.
@@ -123,7 +123,7 @@ func TestCORSActualRequest(t *testing.T) {
 // TestCORSNoCredentials verifies Access-Control-Allow-Credentials is NOT set
 // when using wildcard origins (matching Python allow_credentials=False).
 func TestCORSNoCredentials(t *testing.T) {
-	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{})
+	r := server.NewRouter(nil, nil, "*", server.UploadRateLimit{}, server.UploadAuth{})
 
 	req := httptest.NewRequest("OPTIONS", "/api/v1/files", nil)
 	req.Header.Set("Origin", "http://localhost:3000")

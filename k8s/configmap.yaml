@@ -16,6 +16,7 @@ data:
   UPLOAD_RATE_LIMIT_ENABLED: "true"
   UPLOAD_RATE_LIMIT_RPM: "6"
   UPLOAD_RATE_LIMIT_BURST: "2"
+  UPLOAD_AUTH_ENABLED: "false"
   SANDBOX_ENABLED: "false"
   # Legacy provider fallback only; when sandbox is disabled, mock analysis is not run.
   SANDBOX_MOCK: "true"

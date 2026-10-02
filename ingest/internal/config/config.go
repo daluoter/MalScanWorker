@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
@@ -34,6 +35,9 @@ type Config struct {
 	UploadRateLimitRPM     int  `env:"UPLOAD_RATE_LIMIT_RPM"     envDefault:"6"`
 	UploadRateLimitBurst   int  `env:"UPLOAD_RATE_LIMIT_BURST"   envDefault:"2"`
 
+	UploadAuthEnabled bool   `env:"UPLOAD_AUTH_ENABLED" envDefault:"false"`
+	UploadAPIKey      string `env:"UPLOAD_API_KEY"      envDefault:""`
+
 	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s"`
 }
 
@@ -52,6 +56,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.UploadRateLimitEnabled && (cfg.UploadRateLimitRPM <= 0 || cfg.UploadRateLimitBurst <= 0) {
 		return nil, fmt.Errorf("validate config: UPLOAD_RATE_LIMIT_RPM and UPLOAD_RATE_LIMIT_BURST must be positive when upload rate limiting is enabled")
+	}
+	if cfg.UploadAuthEnabled && (strings.TrimSpace(cfg.UploadAPIKey) == "" || utf8.RuneCountInString(cfg.UploadAPIKey) < 32) {
+		return nil, fmt.Errorf("validate config: UPLOAD_API_KEY must contain at least 32 characters and not be whitespace when upload authentication is enabled")
 	}
 
 	// Strip SQLAlchemy asyncpg dialect: "postgresql+asyncpg://" → "postgresql://"

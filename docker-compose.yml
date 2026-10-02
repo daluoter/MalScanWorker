@@ -157,6 +157,8 @@ services:
       UPLOAD_RATE_LIMIT_ENABLED: ${UPLOAD_RATE_LIMIT_ENABLED:-true}
       UPLOAD_RATE_LIMIT_RPM: ${UPLOAD_RATE_LIMIT_RPM:-6}
       UPLOAD_RATE_LIMIT_BURST: ${UPLOAD_RATE_LIMIT_BURST:-2}
+      UPLOAD_AUTH_ENABLED: ${UPLOAD_AUTH_ENABLED:-false}
+      UPLOAD_API_KEY: ${UPLOAD_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

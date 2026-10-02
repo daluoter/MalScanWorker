@@ -55,7 +55,7 @@ func (healthyRabbitMQ) IsClosed() bool { return false }
 
 func TestUploadRateLimitAllowsConfiguredBurstThenRejectsWithoutReadingBody(t *testing.T) {
 	handler := &observedUploadHandler{}
-	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 7, Burst: 2})
+	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 7, Burst: 2}, UploadAuth{})
 
 	for i := 0; i < 3; i++ {
 		body := &trackedBody{}
@@ -107,7 +107,7 @@ func TestUploadRateLimitAllowsConfiguredBurstThenRejectsWithoutReadingBody(t *te
 func TestUploadRateLimitDoesNotConsumeOrBlockHealthRoutes(t *testing.T) {
 	handler := &observedUploadHandler{}
 	checker := health.NewChecker(healthyDB{}, healthyMinio{}, healthyRabbitMQ{}, "uploads")
-	router := NewRouter(checker, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 1})
+	router := NewRouter(checker, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 1}, UploadAuth{})
 
 	for i := 0; i < 20; i++ {
 		for _, path := range []string{"/health", "/healthz"} {
@@ -146,7 +146,7 @@ func TestUploadRateLimitDoesNotConsumeOrBlockHealthRoutes(t *testing.T) {
 
 func TestUploadRateLimitOnlyAppliesToPOSTFilesRoute(t *testing.T) {
 	handler := &observedUploadHandler{}
-	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 1})
+	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 1}, UploadAuth{})
 
 	for _, tc := range []struct {
 		method string
@@ -175,7 +175,7 @@ func TestUploadRateLimitOnlyAppliesToPOSTFilesRoute(t *testing.T) {
 
 func TestDisabledUploadRateLimitBypassesLimiter(t *testing.T) {
 	handler := &observedUploadHandler{}
-	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: false, RPM: 0, Burst: -1})
+	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: false, RPM: 0, Burst: -1}, UploadAuth{})
 
 	for i := 0; i < 10; i++ {
 		response := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestDisabledUploadRateLimitBypassesLimiter(t *testing.T) {
 
 func TestUploadRateLimitSharesBurstAcrossConcurrentRequests(t *testing.T) {
 	handler := &observedUploadHandler{}
-	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 5})
+	router := NewRouter(nil, handler, "*", UploadRateLimit{Enabled: true, RPM: 1, Burst: 5}, UploadAuth{})
 	const requests = 64
 	var allowed atomic.Int32
 	var rejected atomic.Int32

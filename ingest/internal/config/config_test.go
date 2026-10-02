@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,7 +15,10 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("MINIO_ACCESS_KEY", "minioaccess")
 	t.Setenv("MINIO_SECRET_KEY", "miniosecret")
 	t.Setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-	for _, key := range []string{"UPLOAD_RATE_LIMIT_ENABLED", "UPLOAD_RATE_LIMIT_RPM", "UPLOAD_RATE_LIMIT_BURST"} {
+	for _, key := range []string{
+		"UPLOAD_RATE_LIMIT_ENABLED", "UPLOAD_RATE_LIMIT_RPM", "UPLOAD_RATE_LIMIT_BURST",
+		"UPLOAD_AUTH_ENABLED", "UPLOAD_API_KEY",
+	} {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
 	}
@@ -61,6 +65,79 @@ func TestConfigDefaults(t *testing.T) {
 	}
 	if cfg.UploadRateLimitBurst != 2 {
 		t.Errorf("UploadRateLimitBurst = %d, want 2", cfg.UploadRateLimitBurst)
+	}
+	if cfg.UploadAuthEnabled || cfg.UploadAPIKey != "" {
+		t.Errorf("upload auth defaults = (%v, %q), want (false, empty)", cfg.UploadAuthEnabled, cfg.UploadAPIKey)
+	}
+}
+
+func TestUploadAuthConfigOverrides(t *testing.T) {
+	setRequiredEnv(t)
+	apiKey := "synthetic-upload-api-key-for-tests-0001"
+	t.Setenv("UPLOAD_AUTH_ENABLED", "true")
+	t.Setenv("UPLOAD_API_KEY", apiKey)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if !cfg.UploadAuthEnabled || cfg.UploadAPIKey != apiKey {
+		t.Errorf("upload auth config = (%v, %q), want (true, configured key)", cfg.UploadAuthEnabled, cfg.UploadAPIKey)
+	}
+}
+
+func TestUploadAuthEnabledRequiresNonWhitespaceKeyOfAtLeast32Runes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		apiKey string
+	}{
+		{name: "empty", apiKey: ""},
+		{name: "whitespace only", apiKey: " \t\n"},
+		{name: "short", apiKey: "synthetic-short-key"},
+		{name: "31 runes", apiKey: strings.Repeat("x", 31)},
+		{name: "16 multibyte runes", apiKey: strings.Repeat("é", 16)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("UPLOAD_AUTH_ENABLED", "true")
+			t.Setenv("UPLOAD_API_KEY", tc.apiKey)
+			_, err := Load()
+			if err == nil {
+				t.Fatal("Load() returned nil error, want validation error")
+			}
+			if tc.apiKey != "" && strings.Contains(err.Error(), tc.apiKey) {
+				t.Errorf("validation error leaked configured key: %q", err.Error())
+			}
+		})
+	}
+}
+
+func TestUploadAuthEnabledCountsUnicodeRunesAndPreservesKey(t *testing.T) {
+	setRequiredEnv(t)
+	apiKey := strings.Repeat("界", 32)
+	t.Setenv("UPLOAD_AUTH_ENABLED", "true")
+	t.Setenv("UPLOAD_API_KEY", apiKey)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() rejected a 32-rune Unicode key: %v", err)
+	}
+	if cfg.UploadAPIKey != apiKey {
+		t.Errorf("UploadAPIKey was modified: got %q", cfg.UploadAPIKey)
+	}
+}
+
+func TestDisabledUploadAuthAllowsEmptyKey(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("UPLOAD_AUTH_ENABLED", "false")
+	t.Setenv("UPLOAD_API_KEY", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() rejected an empty key while authentication is disabled: %v", err)
+	}
+	if cfg.UploadAuthEnabled || cfg.UploadAPIKey != "" {
+		t.Errorf("upload auth config = (%v, %q), want (false, empty)", cfg.UploadAuthEnabled, cfg.UploadAPIKey)
 	}
 }
 
@@ -252,7 +329,7 @@ func TestLoadFromDotEnvFile(t *testing.T) {
 	// Clear all required env vars so Load() must read them from .env
 	for _, key := range []string{
 		"DATABASE_URL", "MINIO_ENDPOINT", "MINIO_ACCESS_KEY",
-		"MINIO_SECRET_KEY", "RABBITMQ_URL",
+		"MINIO_SECRET_KEY", "RABBITMQ_URL", "UPLOAD_AUTH_ENABLED", "UPLOAD_API_KEY",
 	} {
 		t.Setenv(key, "") // register for cleanup
 		os.Unsetenv(key)  // actually unset

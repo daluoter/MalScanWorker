@@ -333,6 +333,20 @@ go run ./cmd/ingest
 
 Ingest defaults to **6 uploads per minute** with a burst of **2**. Configure it with `UPLOAD_RATE_LIMIT_ENABLED`, `UPLOAD_RATE_LIMIT_RPM`, and `UPLOAD_RATE_LIMIT_BURST`. The in-memory limit applies per ingest process; multiple replicas each have their own bucket, so use distributed or edge limiting if a shared cluster-wide limit is required.
 
+Optional server-side Bearer authentication is disabled by default (`UPLOAD_AUTH_ENABLED=false`). When enabled, it protects only the Go Ingest `POST /api/v1/files` route. Set these environment variables on the ingest server, replacing the example value with a securely supplied key (never commit the real key):
+```bash
+UPLOAD_AUTH_ENABLED=true
+UPLOAD_API_KEY=REPLACE_WITH_GENERATED_64_HEX_CHARACTERS
+```
+Generate a key with `openssl rand -hex 32`. A trusted client sends it in the standard Bearer header:
+```bash
+export UPLOAD_API_KEY='<securely supplied server key>'
+curl -X POST http://localhost:8080/api/v1/files \\
+  -H "Authorization: Bearer ${UPLOAD_API_KEY}" \\
+  -F 'file=@sample.bin'
+```
+**Important: Never put this key in a `VITE_*` variable, frontend source, a browser, or GitHub Pages; frontend build output is public and cannot keep secrets. There is intentionally no frontend integration—never give the server key to a browser.**
+
 ### 5. Start the Backend
 ```bash
 cd backend

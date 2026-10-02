@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,11 +27,17 @@ type UploadRateLimit struct {
 	Burst   int
 }
 
+// UploadAuth configures optional Bearer authentication for POST /api/v1/files.
+type UploadAuth struct {
+	Enabled bool
+	APIKey  string
+}
+
 // NewRouter creates a chi router with CORS, health check, and upload routes.
 // corsOrigins configures allowed origins: "*" for wildcard, or comma-separated
 // list of origins (e.g. "http://localhost:3000,http://example.com").
 // Matches Python FastAPI CORSMiddleware configuration exactly (main.py lines 34-52).
-func NewRouter(checker *health.Checker, uploadHandler http.Handler, corsOrigins string, uploadRateLimit UploadRateLimit) *chi.Mux {
+func NewRouter(checker *health.Checker, uploadHandler http.Handler, corsOrigins string, uploadRateLimit UploadRateLimit, uploadAuth UploadAuth) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Parse CORS origins matching Python: main.py lines 35-38
@@ -77,6 +85,11 @@ func NewRouter(checker *health.Checker, uploadHandler http.Handler, corsOrigins 
 		limiter, retryAfter := newUploadRateLimiter(uploadRateLimit)
 		uploadRoute = uploadRateLimitMiddleware(uploadRoute, limiter, retryAfter)
 	}
+	if uploadAuth.Enabled {
+		// Authentication is outside the limiter so invalid credentials do not
+		// consume upload capacity or reach body limiting/handling.
+		uploadRoute = uploadAuthMiddleware(uploadRoute, uploadAuth.APIKey)
+	}
 	r.Post("/api/v1/files", uploadRoute.ServeHTTP)
 
 	return r
@@ -99,6 +112,49 @@ func retryAfter(rpm int) string {
 		seconds = 1
 	}
 	return strconv.Itoa(seconds)
+}
+
+func uploadAuthMiddleware(next http.Handler, apiKey string) http.Handler {
+	expectedDigest := sha256.Sum256([]byte(apiKey))
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		token, ok := bearerToken(req.Header.Values("Authorization"))
+		if !ok {
+			writeUnauthorized(w)
+			return
+		}
+
+		providedDigest := sha256.Sum256([]byte(token))
+		if subtle.ConstantTimeCompare(expectedDigest[:], providedDigest[:]) != 1 {
+			writeUnauthorized(w)
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+func bearerToken(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+
+	header := values[0]
+	schemeEnd := strings.IndexByte(header, ' ')
+	if schemeEnd <= 0 || !strings.EqualFold(header[:schemeEnd], "Bearer") {
+		return "", false
+	}
+
+	// One or more SP characters separate the scheme from its credentials.
+	token := strings.TrimLeft(header[schemeEnd+1:], " ")
+	if token == "" || strings.ContainsAny(token, " \t\r\n") {
+		return "", false
+	}
+	return token, true
+}
+
+func writeUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", "Bearer")
+	upload.WriteError(w, http.StatusUnauthorized, upload.CodeUnauthorized,
+		"Invalid or missing upload credentials.", nil)
 }
 
 func uploadRateLimitMiddleware(next http.Handler, limiter *rate.Limiter, retryAfter string) http.Handler {

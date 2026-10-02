@@ -15,6 +15,7 @@ const (
 	CodeQueueUnavailable   = "QUEUE_UNAVAILABLE"
 	CodeQueuePublishFailed = "QUEUE_PUBLISH_FAILED"
 	CodeRateLimitExceeded  = "RATE_LIMIT_EXCEEDED"
+	CodeUnauthorized       = "UNAUTHORIZED"
 )
 
 // ApiError represents a single error with code, message, and optional details.

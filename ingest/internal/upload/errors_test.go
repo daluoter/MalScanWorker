@@ -120,6 +120,7 @@ func TestErrorCodeConstants(t *testing.T) {
 		"CodeStorageError":       upload.CodeStorageError,
 		"CodeQueueUnavailable":   upload.CodeQueueUnavailable,
 		"CodeQueuePublishFailed": upload.CodeQueuePublishFailed,
+		"CodeUnauthorized":       upload.CodeUnauthorized,
 	}
 	for name, val := range codes {
 		if val == "" {

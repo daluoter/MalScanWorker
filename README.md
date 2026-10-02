@@ -343,6 +343,20 @@ go run ./cmd/ingest
 
 Ingest 預設每分鐘允許 **6 次上傳**，突發上限為 **2 次**。可透過 `UPLOAD_RATE_LIMIT_ENABLED`、`UPLOAD_RATE_LIMIT_RPM` 和 `UPLOAD_RATE_LIMIT_BURST` 設定。此記憶體內限制適用於單一 ingest 程序；多個 replicas 各自使用獨立的 token bucket。若需要整個叢集共用限制，請使用分散式或邊緣限流。
 
+可選的伺服器端 Bearer 認證預設停用 (`UPLOAD_AUTH_ENABLED=false`)，啟用後只保護 Go Ingest 的 `POST /api/v1/files`。在 ingest 服務端設定以下環境變數，並將範例值替換成安全提供的金鑰（不要提交真實金鑰）：
+```bash
+UPLOAD_AUTH_ENABLED=true
+UPLOAD_API_KEY=REPLACE_WITH_GENERATED_64_HEX_CHARACTERS
+```
+使用 `openssl rand -hex 32` 產生金鑰。可信任的用戶端以標準 Bearer 標頭上傳：
+```bash
+export UPLOAD_API_KEY='<securely supplied server key>'
+curl -X POST http://localhost:8080/api/v1/files \\
+  -H "Authorization: Bearer ${UPLOAD_API_KEY}" \\
+  -F 'file=@sample.bin'
+```
+**重要：不要將金鑰放進任何 `VITE_*` 變數、前端程式碼、瀏覽器或 GitHub Pages；前端建置內容是公開的，不能保密。此功能刻意沒有前端整合；請勿將伺服器金鑰提供給瀏覽器。**
+
 ### 5. 啟動後端
 ```bash
 cd backend
