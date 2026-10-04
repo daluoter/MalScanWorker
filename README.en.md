@@ -103,13 +103,13 @@ cd backend
 docker build -t ghcr.io/YOUR_USERNAME/malscan-api:latest .
 docker push ghcr.io/YOUR_USERNAME/malscan-api:latest
 
-# Worker
-cd ../worker
-docker build -t ghcr.io/YOUR_USERNAME/malscan-worker:latest .
+# Worker (build from project root)
+cd ..
+docker build -f worker/Dockerfile -t ghcr.io/YOUR_USERNAME/malscan-worker:latest .
 docker push ghcr.io/YOUR_USERNAME/malscan-worker:latest
 
 # Ingest (Go)
-cd ../ingest
+cd ingest
 docker build -t ghcr.io/YOUR_USERNAME/malscan-ingest:latest .
 docker push ghcr.io/YOUR_USERNAME/malscan-ingest:latest
 ```
