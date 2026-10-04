@@ -18,9 +18,11 @@ import (
 	"github.com/daluoter/malscan-ingest/internal/store"
 )
 
-// ObjectUploader abstracts MinIO PutObject for testing.
+// ObjectUploader abstracts MinIO object operations for testing.
 // *minio.Client satisfies this interface natively.
 type ObjectUploader interface {
+	StatObject(ctx context.Context, bucketName, objectName string,
+		opts minio.StatObjectOptions) (minio.ObjectInfo, error)
 	PutObject(ctx context.Context, bucketName string, objectName string,
 		reader io.Reader, objectSize int64, opts minio.PutObjectOptions) (minio.UploadInfo, error)
 }
@@ -68,6 +70,20 @@ func NewHandler(storage ObjectUploader, st FileStore, publisher JobPublisher,
 		bucket:    bucket,
 		maxSize:   maxSize,
 		logger:    logger,
+	}
+}
+
+func isMissingObjectError(err error) bool {
+	var response minio.ErrorResponse
+	if !errors.As(err, &response) {
+		return false
+	}
+
+	switch response.Code {
+	case minio.NoSuchKey, "NoSuchObject", "NotFound":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -217,8 +233,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 8. Upload to MinIO only if file is new (dedup)
-	if fileRec.IsNew {
+	// 8. Ensure the content-addressed object exists before publishing the job.
+	needsUpload := fileRec.IsNew
+	restoringObject := false
+	if !fileRec.IsNew {
+		_, statErr := h.storage.StatObject(r.Context(), h.bucket, sha256Hash, minio.StatObjectOptions{})
+		if statErr == nil {
+			h.logger.Info("file_exists", "sha256", sha256Hash, "file_id", fileRec.ID.String())
+		} else if isMissingObjectError(statErr) {
+			needsUpload = true
+			restoringObject = true
+			h.logger.Info("file_object_missing", "sha256", sha256Hash, "file_id", fileRec.ID.String(), "bucket", h.bucket)
+		} else {
+			WriteError(w, http.StatusInternalServerError, CodeStorageError, "Failed to store file: "+statErr.Error(), nil)
+			return
+		}
+	}
+
+	if needsUpload {
 		if _, seekErr := tempFile.Seek(0, io.SeekStart); seekErr != nil {
 			WriteError(w, http.StatusInternalServerError, CodeInternalError, "Failed to seek temp file: "+seekErr.Error(), nil)
 			return
@@ -229,8 +261,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusInternalServerError, CodeStorageError, "Failed to store file: "+err.Error(), nil)
 			return
 		}
-	} else {
-		h.logger.Info("file_exists", "sha256", sha256Hash, "file_id", fileRec.ID.String())
+		if restoringObject {
+			h.logger.Info("file_object_restored", "sha256", sha256Hash, "file_id", fileRec.ID.String(), "bucket", h.bucket)
+		}
 	}
 
 	// 9. Publish job to RabbitMQ

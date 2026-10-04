@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"os"
 	"testing"
 	"time"
 
@@ -26,20 +28,44 @@ import (
 
 // mockUploader implements upload.ObjectUploader for testing.
 type mockUploader struct {
-	putErr     error
-	lastBucket string
-	lastKey    string
-	lastData   []byte
-	lastCT     string
-	putCalled  bool
+	statErr        error
+	putErr         error
+	lastStatBucket string
+	lastStatKey    string
+	lastBucket     string
+	lastKey        string
+	lastData       []byte
+	lastSize       int64
+	lastCT         string
+	statCalled     bool
+	statCalls      int
+	putCalled      bool
+	putCalls       int
+	events         *[]string
 }
 
-func (m *mockUploader) PutObject(_ context.Context, bucket, key string, reader io.Reader, _ int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
+func (m *mockUploader) StatObject(_ context.Context, bucket, key string, _ minio.StatObjectOptions) (minio.ObjectInfo, error) {
+	m.statCalled = true
+	m.statCalls++
+	m.lastStatBucket = bucket
+	m.lastStatKey = key
+	if m.events != nil {
+		*m.events = append(*m.events, "stat")
+	}
+	return minio.ObjectInfo{}, m.statErr
+}
+
+func (m *mockUploader) PutObject(_ context.Context, bucket, key string, reader io.Reader, size int64, opts minio.PutObjectOptions) (minio.UploadInfo, error) {
 	m.putCalled = true
+	m.putCalls++
 	m.lastBucket = bucket
 	m.lastKey = key
+	m.lastSize = size
 	m.lastData, _ = io.ReadAll(reader)
 	m.lastCT = opts.ContentType
+	if m.events != nil {
+		*m.events = append(*m.events, "put")
+	}
 	return minio.UploadInfo{}, m.putErr
 }
 
@@ -52,6 +78,8 @@ type mockFileStore struct {
 	validateErr     error
 	markFailedErr   error
 	markFailedCalls int
+	createCalls     int
+	events          *[]string
 }
 
 func newDefaultMockFileStore() *mockFileStore {
@@ -75,6 +103,10 @@ func newDefaultMockFileStore() *mockFileStore {
 
 func (m *mockFileStore) CreateFileAndJob(_ context.Context, _ string, _ int64, _ string,
 	_ string, _ *uuid.UUID, _ int) (store.FileRecord, store.JobRecord, error) {
+	m.createCalls++
+	if m.events != nil {
+		*m.events = append(*m.events, "create")
+	}
 	return m.fileRec, m.jobRec, m.createErr
 }
 
@@ -92,11 +124,15 @@ type mockJobPublisher struct {
 	publishErr error
 	lastMsg    queue.JobMessage
 	published  bool
+	events     *[]string
 }
 
 func (m *mockJobPublisher) Publish(_ context.Context, msg queue.JobMessage) error {
 	m.lastMsg = msg
 	m.published = true
+	if m.events != nil {
+		*m.events = append(*m.events, "publish")
+	}
 	return m.publishErr
 }
 
@@ -161,6 +197,57 @@ func newMultipartRequestWithParent(t *testing.T, filename, contentType string, b
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/files", &buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	return req
+}
+
+const lifecycleUploadContent = "sha256-addressed lifecycle test content"
+
+func runLifecycleUpload(t *testing.T, isNew bool, statErr, putErr error) (*httptest.ResponseRecorder, *mockUploader, *mockFileStore, *mockJobPublisher, []string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+
+	events := []string{}
+	uploader := &mockUploader{statErr: statErr, putErr: putErr, events: &events}
+	fileStore := newDefaultMockFileStore()
+	fileStore.fileRec.IsNew = isNew
+	fileStore.events = &events
+	publisher := &mockJobPublisher{events: &events}
+	h := upload.NewHandler(uploader, fileStore, publisher, "test-bucket", 100*1024*1024, slog.Default())
+
+	req := newMultipartRequest(t, "file", "lifecycle.bin", "application/x-lifecycle-test", []byte(lifecycleUploadContent))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("read temp dir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("temporary upload files remain after request: %v", entries)
+	}
+	return w, uploader, fileStore, publisher, events
+}
+
+func assertEventOrder(t *testing.T, got, want []string) {
+	t.Helper()
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("invocation order = %v, want %v", got, want)
+	}
+}
+
+func assertStorageErrorResponse(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	errObj, ok := resp["error"].(map[string]any)
+	if !ok || errObj["code"] != "STORAGE_ERROR" {
+		t.Fatalf("error.code = %v, want STORAGE_ERROR", resp["error"])
+	}
 }
 
 func TestHandler_ValidUpload(t *testing.T) {
@@ -387,30 +474,126 @@ func TestHandler_FilenameSanitization(t *testing.T) {
 
 // === New tests for Phase 3 pipeline ===
 
-func TestHandler_DedupSkipMinIO(t *testing.T) {
-	mock := &mockUploader{}
-	mockStore := newDefaultMockFileStore()
-	mockStore.fileRec.IsNew = false // dedup hit
-	mockPub := &mockJobPublisher{}
-	h := upload.NewHandler(mock, mockStore, mockPub, "test-bucket", 100*1024*1024, slog.Default())
-
-	req := newMultipartRequest(t, "file", "test.exe", "application/octet-stream", []byte("data"))
-	w := httptest.NewRecorder()
-
-	h.ServeHTTP(w, req)
-
+func TestHandler_NewFileSkipsStatAndPublishesAfterPut(t *testing.T) {
+	w, uploader, fileStore, publisher, events := runLifecycleUpload(t, true, nil, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
 	}
-
-	// PutObject should NOT have been called
-	if mock.putCalled {
-		t.Error("PutObject was called, but file already exists (IsNew=false)")
+	if uploader.statCalls != 0 {
+		t.Errorf("StatObject calls = %d, want 0 for a new file", uploader.statCalls)
 	}
+	if uploader.putCalls != 1 || !publisher.published {
+		t.Errorf("PutObject calls = %d and published = %t, want one PutObject then one publish", uploader.putCalls, publisher.published)
+	}
+	assertEventOrder(t, events, []string{"create", "put", "publish"})
+	assertUploadedContent(t, uploader, publisher, fileStore)
+}
 
-	// Publisher should still be called
-	if !mockPub.published {
+func TestHandler_DedupSkipMinIO(t *testing.T) {
+	w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, nil, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+	}
+	if uploader.statCalls != 1 || uploader.lastStatBucket != "test-bucket" {
+		t.Errorf("StatObject calls/bucket = %d/%q, want one stat in test-bucket", uploader.statCalls, uploader.lastStatBucket)
+	}
+	if uploader.lastStatKey != expectedLifecycleHash() {
+		t.Errorf("StatObject key = %q, want sha256 %q", uploader.lastStatKey, expectedLifecycleHash())
+	}
+	if uploader.putCalls != 0 {
+		t.Errorf("PutObject calls = %d, want 0 while the deduplicated object exists", uploader.putCalls)
+	}
+	if !publisher.published {
 		t.Error("publisher was not called for dedup file")
+	}
+	assertEventOrder(t, events, []string{"create", "stat", "publish"})
+	if publisher.lastMsg.FileID != fileStore.fileRec.ID.String() || fileStore.createCalls != 1 {
+		t.Errorf("dedup publish used file_id %q after %d record creations; want existing file_id %q and one creation", publisher.lastMsg.FileID, fileStore.createCalls, fileStore.fileRec.ID)
+	}
+}
+
+func TestHandler_DedupRestoresMissingObjects(t *testing.T) {
+	for _, code := range []string{minio.NoSuchKey, "NoSuchObject", "NotFound"} {
+		t.Run(code, func(t *testing.T) {
+			missingErr := minio.ErrorResponse{Code: code, StatusCode: http.StatusNotFound}
+			w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, fmt.Errorf("stat object: %w", missingErr), nil)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+			}
+			if uploader.statCalls != 1 || uploader.putCalls != 1 || !publisher.published {
+				t.Fatalf("stat/put/publish = %d/%d/%t, want 1/1/true", uploader.statCalls, uploader.putCalls, publisher.published)
+			}
+			assertEventOrder(t, events, []string{"create", "stat", "put", "publish"})
+			assertUploadedContent(t, uploader, publisher, fileStore)
+		})
+	}
+}
+
+func TestHandler_DedupStatErrorsDoNotUploadOrPublish(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "network", err: errors.New("connection timeout")},
+		{name: "permission", err: minio.ErrorResponse{Code: minio.AccessDenied, StatusCode: http.StatusForbidden}},
+		{name: "server", err: minio.ErrorResponse{Code: "ServiceUnavailable", StatusCode: http.StatusServiceUnavailable}},
+		{name: "missing bucket", err: minio.ErrorResponse{Code: minio.NoSuchBucket, StatusCode: http.StatusNotFound}},
+		{name: "bare typed 404", err: minio.ErrorResponse{StatusCode: http.StatusNotFound}},
+		{name: "plain 404 error", err: errors.New("404 Not Found")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, tc.err, nil)
+			assertStorageErrorResponse(t, w)
+			if uploader.statCalls != 1 || uploader.putCalls != 0 || publisher.published {
+				t.Errorf("stat/put/published = %d/%d/%t, want 1/0/false", uploader.statCalls, uploader.putCalls, publisher.published)
+			}
+			assertEventOrder(t, events, []string{"create", "stat"})
+			if fileStore.markFailedCalls != 0 {
+				t.Errorf("MarkJobFailed calls = %d, want existing storage-failure behavior", fileStore.markFailedCalls)
+			}
+		})
+	}
+}
+
+func TestHandler_DedupRepairPutFailureDoesNotPublish(t *testing.T) {
+	missingErr := minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
+	w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, missingErr, errors.New("put failed"))
+	assertStorageErrorResponse(t, w)
+	if uploader.statCalls != 1 || uploader.putCalls != 1 || publisher.published {
+		t.Errorf("stat/put/published = %d/%d/%t, want 1/1/false", uploader.statCalls, uploader.putCalls, publisher.published)
+	}
+	assertEventOrder(t, events, []string{"create", "stat", "put"})
+	if fileStore.markFailedCalls != 0 {
+		t.Errorf("MarkJobFailed calls = %d, want existing storage-failure behavior", fileStore.markFailedCalls)
+	}
+}
+
+func expectedLifecycleHash() string {
+	sum := sha256.Sum256([]byte(lifecycleUploadContent))
+	return hex.EncodeToString(sum[:])
+}
+
+func assertUploadedContent(t *testing.T, uploader *mockUploader, publisher *mockJobPublisher, fileStore *mockFileStore) {
+	t.Helper()
+	expectedHash := expectedLifecycleHash()
+	if uploader.lastBucket != "test-bucket" || uploader.lastKey != expectedHash {
+		t.Errorf("PutObject bucket/key = %q/%q, want test-bucket/%q", uploader.lastBucket, uploader.lastKey, expectedHash)
+	}
+	if uploader.lastSize != int64(len(lifecycleUploadContent)) {
+		t.Errorf("PutObject size = %d, want %d", uploader.lastSize, len(lifecycleUploadContent))
+	}
+	if uploader.lastCT != "application/x-lifecycle-test" {
+		t.Errorf("PutObject content-type = %q, want application/x-lifecycle-test", uploader.lastCT)
+	}
+	if !bytes.Equal(uploader.lastData, []byte(lifecycleUploadContent)) {
+		t.Errorf("PutObject body = %q, want original upload bytes", uploader.lastData)
+	}
+	if publisher.lastMsg.FileID != fileStore.fileRec.ID.String() || fileStore.createCalls != 1 {
+		t.Errorf("publish used file_id %q after %d record creations; want existing file_id %q and one creation", publisher.lastMsg.FileID, fileStore.createCalls, fileStore.fileRec.ID)
+	}
+	if publisher.lastMsg.SHA256 != expectedHash || publisher.lastMsg.StorageKey != expectedHash {
+		t.Errorf("published SHA/storage key = %q/%q, want %q", publisher.lastMsg.SHA256, publisher.lastMsg.StorageKey, expectedHash)
 	}
 }
 
