@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/minio/minio-go/v7"
@@ -84,6 +85,17 @@ func isMissingObjectError(err error) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+const markJobFailedTimeout = 5 * time.Second
+
+func (h *Handler) markJobFailed(ctx context.Context, jobID uuid.UUID, reason string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markJobFailedTimeout)
+	defer cancel()
+
+	if markErr := h.store.MarkJobFailed(cleanupCtx, jobID, reason); markErr != nil {
+		h.logger.Error("failed to mark job as failed", "job_id", jobID.String(), "error", markErr)
 	}
 }
 
@@ -245,6 +257,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			restoringObject = true
 			h.logger.Info("file_object_missing", "sha256", sha256Hash, "file_id", fileRec.ID.String(), "bucket", h.bucket)
 		} else {
+			h.markJobFailed(r.Context(), jobRec.ID, "storage stat failed: "+statErr.Error())
 			WriteError(w, http.StatusInternalServerError, CodeStorageError, "Failed to store file: "+statErr.Error(), nil)
 			return
 		}
@@ -258,6 +271,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, err = h.storage.PutObject(r.Context(), h.bucket, sha256Hash, tempFile, fileSize,
 			minio.PutObjectOptions{ContentType: contentType})
 		if err != nil {
+			reason := "storage put failed: " + err.Error()
+			if restoringObject {
+				reason = "storage repair put failed: " + err.Error()
+			}
+			h.markJobFailed(r.Context(), jobRec.ID, reason)
 			WriteError(w, http.StatusInternalServerError, CodeStorageError, "Failed to store file: "+err.Error(), nil)
 			return
 		}
@@ -275,10 +293,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		OriginalFilename: filename,
 	})
 	if err != nil {
-		// Mark the job as failed since we couldn't queue it
-		if markErr := h.store.MarkJobFailed(r.Context(), jobRec.ID, "publish failed: "+err.Error()); markErr != nil {
-			h.logger.Error("failed to mark job as failed", "job_id", jobRec.ID.String(), "error", markErr)
-		}
+		// Mark the job as failed since we couldn't queue it.
+		h.markJobFailed(r.Context(), jobRec.ID, "publish failed: "+err.Error())
 		WriteError(w, http.StatusServiceUnavailable, CodeQueuePublishFailed, "Failed to submit job to processing queue. Please try again.", nil)
 		return
 	}

@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,15 +72,18 @@ func (m *mockUploader) PutObject(_ context.Context, bucket, key string, reader i
 
 // mockFileStore implements upload.FileStore for testing.
 type mockFileStore struct {
-	fileRec         store.FileRecord
-	jobRec          store.JobRecord
-	createErr       error
-	validateDepth   int
-	validateErr     error
-	markFailedErr   error
-	markFailedCalls int
-	createCalls     int
-	events          *[]string
+	fileRec          store.FileRecord
+	jobRec           store.JobRecord
+	createErr        error
+	validateDepth    int
+	validateErr      error
+	markFailedErr    error
+	markFailedCalls  int
+	markFailedJobID  uuid.UUID
+	markFailedReason string
+	markFailed       func(context.Context, uuid.UUID, string)
+	createCalls      int
+	events           *[]string
 }
 
 func newDefaultMockFileStore() *mockFileStore {
@@ -114,8 +118,16 @@ func (m *mockFileStore) ValidateParentJob(_ context.Context, _ uuid.UUID) (int, 
 	return m.validateDepth, m.validateErr
 }
 
-func (m *mockFileStore) MarkJobFailed(_ context.Context, _ uuid.UUID, _ string) error {
+func (m *mockFileStore) MarkJobFailed(ctx context.Context, jobID uuid.UUID, reason string) error {
 	m.markFailedCalls++
+	m.markFailedJobID = jobID
+	m.markFailedReason = reason
+	if m.events != nil {
+		*m.events = append(*m.events, "mark_failed")
+	}
+	if m.markFailed != nil {
+		m.markFailed(ctx, jobID, reason)
+	}
 	return m.markFailedErr
 }
 
@@ -235,7 +247,7 @@ func assertEventOrder(t *testing.T, got, want []string) {
 	}
 }
 
-func assertStorageErrorResponse(t *testing.T, w *httptest.ResponseRecorder) {
+func assertStorageErrorResponse(t *testing.T, w *httptest.ResponseRecorder, storageErr error) {
 	t.Helper()
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
@@ -244,9 +256,57 @@ func assertStorageErrorResponse(t *testing.T, w *httptest.ResponseRecorder) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
+	if len(resp) != 1 {
+		t.Fatalf("response schema = %v, want only the error envelope", resp)
+	}
 	errObj, ok := resp["error"].(map[string]any)
 	if !ok || errObj["code"] != "STORAGE_ERROR" {
 		t.Fatalf("error.code = %v, want STORAGE_ERROR", resp["error"])
+	}
+	if got, want := errObj["message"], "Failed to store file: "+storageErr.Error(); got != want {
+		t.Errorf("error.message = %v, want original storage message %q", got, want)
+	}
+	if len(errObj) != 2 {
+		t.Errorf("error schema = %v, want only code and message", errObj)
+	}
+}
+
+func assertJobFailureMarked(t *testing.T, fileStore *mockFileStore, wantReason string) {
+	t.Helper()
+	if fileStore.markFailedCalls != 1 {
+		t.Fatalf("MarkJobFailed calls = %d, want exactly 1", fileStore.markFailedCalls)
+	}
+	if fileStore.markFailedJobID != fileStore.jobRec.ID {
+		t.Errorf("MarkJobFailed job ID = %s, want created job ID %s", fileStore.markFailedJobID, fileStore.jobRec.ID)
+	}
+	if fileStore.markFailedReason != wantReason {
+		t.Errorf("MarkJobFailed reason = %q, want %q", fileStore.markFailedReason, wantReason)
+	}
+}
+
+type cleanupContextValueKey struct{}
+
+const cleanupContextTestTimeout = 5 * time.Second
+
+func assertCleanupContextAtCall(t *testing.T, ctx context.Context, wantValue string) {
+	t.Helper()
+	if err := ctx.Err(); err != nil {
+		t.Errorf("MarkJobFailed context err = %v, want nil while cleanup runs", err)
+	}
+	select {
+	case <-ctx.Done():
+		t.Error("MarkJobFailed context Done is already closed while cleanup runs")
+	default:
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("MarkJobFailed context has no bounded deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > cleanupContextTestTimeout {
+		t.Errorf("MarkJobFailed context deadline is %s away, want within %s", remaining, cleanupContextTestTimeout)
+	}
+	if got := ctx.Value(cleanupContextValueKey{}); got != wantValue {
+		t.Errorf("MarkJobFailed context value = %v, want %q", got, wantValue)
 	}
 }
 
@@ -544,28 +604,149 @@ func TestHandler_DedupStatErrorsDoNotUploadOrPublish(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, tc.err, nil)
-			assertStorageErrorResponse(t, w)
+			assertStorageErrorResponse(t, w, tc.err)
 			if uploader.statCalls != 1 || uploader.putCalls != 0 || publisher.published {
 				t.Errorf("stat/put/published = %d/%d/%t, want 1/0/false", uploader.statCalls, uploader.putCalls, publisher.published)
 			}
-			assertEventOrder(t, events, []string{"create", "stat"})
-			if fileStore.markFailedCalls != 0 {
-				t.Errorf("MarkJobFailed calls = %d, want existing storage-failure behavior", fileStore.markFailedCalls)
-			}
+			assertEventOrder(t, events, []string{"create", "stat", "mark_failed"})
+			assertJobFailureMarked(t, fileStore, "storage stat failed: "+tc.err.Error())
 		})
 	}
 }
 
 func TestHandler_DedupRepairPutFailureDoesNotPublish(t *testing.T) {
 	missingErr := minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
-	w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, missingErr, errors.New("put failed"))
-	assertStorageErrorResponse(t, w)
+	storageErr := errors.New("put failed")
+	w, uploader, fileStore, publisher, events := runLifecycleUpload(t, false, missingErr, storageErr)
+	assertStorageErrorResponse(t, w, storageErr)
 	if uploader.statCalls != 1 || uploader.putCalls != 1 || publisher.published {
 		t.Errorf("stat/put/published = %d/%d/%t, want 1/1/false", uploader.statCalls, uploader.putCalls, publisher.published)
 	}
-	assertEventOrder(t, events, []string{"create", "stat", "put"})
-	if fileStore.markFailedCalls != 0 {
-		t.Errorf("MarkJobFailed calls = %d, want existing storage-failure behavior", fileStore.markFailedCalls)
+	assertEventOrder(t, events, []string{"create", "stat", "put", "mark_failed"})
+	assertJobFailureMarked(t, fileStore, "storage repair put failed: "+storageErr.Error())
+}
+
+func TestHandler_StorageFailuresUseDetachedCleanupContext(t *testing.T) {
+	missingErr := minio.ErrorResponse{Code: minio.NoSuchKey, StatusCode: http.StatusNotFound}
+	cases := []struct {
+		name       string
+		isNew      bool
+		statErr    error
+		putErr     error
+		failureErr error
+		reason     string
+		wantEvents []string
+		wantStats  int
+		wantPuts   int
+	}{
+		{
+			name:       "stat",
+			statErr:    errors.New("stat unavailable"),
+			failureErr: errors.New("stat unavailable"),
+			reason:     "storage stat failed: stat unavailable",
+			wantEvents: []string{"create", "stat", "mark_failed"},
+			wantStats:  1,
+		},
+		{
+			name:       "new put",
+			isNew:      true,
+			putErr:     errors.New("upload unavailable"),
+			failureErr: errors.New("upload unavailable"),
+			reason:     "storage put failed: upload unavailable",
+			wantEvents: []string{"create", "put", "mark_failed"},
+			wantPuts:   1,
+		},
+		{
+			name:       "repair put",
+			statErr:    missingErr,
+			putErr:     errors.New("repair unavailable"),
+			failureErr: errors.New("repair unavailable"),
+			reason:     "storage repair put failed: repair unavailable",
+			wantEvents: []string{"create", "stat", "put", "mark_failed"},
+			wantStats:  1,
+			wantPuts:   1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			t.Setenv("TMPDIR", tempDir)
+
+			marker := "trace-" + tc.name
+			events := []string{}
+			uploader := &mockUploader{statErr: tc.statErr, putErr: tc.putErr, events: &events}
+			fileStore := newDefaultMockFileStore()
+			fileStore.fileRec.IsNew = tc.isNew
+			fileStore.events = &events
+			var cleanupCtx context.Context
+			fileStore.markFailed = func(ctx context.Context, _ uuid.UUID, _ string) {
+				cleanupCtx = ctx
+				assertCleanupContextAtCall(t, ctx, marker)
+			}
+			publisher := &mockJobPublisher{events: &events}
+			h := upload.NewHandler(uploader, fileStore, publisher, "test-bucket", 100*1024*1024, slog.Default())
+
+			req := newMultipartRequest(t, "file", "storage-failure.bin", "application/octet-stream", []byte(lifecycleUploadContent))
+			requestCtx, cancelRequest := context.WithCancel(context.WithValue(req.Context(), cleanupContextValueKey{}, marker))
+			cancelRequest()
+			req = req.WithContext(requestCtx)
+			if requestCtx.Err() != context.Canceled {
+				t.Fatalf("request context err = %v, want canceled before handler", requestCtx.Err())
+			}
+
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			assertStorageErrorResponse(t, w, tc.failureErr)
+			assertJobFailureMarked(t, fileStore, tc.reason)
+			assertEventOrder(t, events, tc.wantEvents)
+			if uploader.statCalls != tc.wantStats || uploader.putCalls != tc.wantPuts || publisher.published {
+				t.Errorf("stat/put/published = %d/%d/%t, want %d/%d/false", uploader.statCalls, uploader.putCalls, publisher.published, tc.wantStats, tc.wantPuts)
+			}
+			if cleanupCtx == nil {
+				t.Fatal("MarkJobFailed did not receive a cleanup context")
+			}
+			if err := cleanupCtx.Err(); err != context.Canceled {
+				t.Errorf("cleanup context err after helper returned = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
+func TestHandler_NewFilePutFailureMarksJobFailedAndPreservesStorageResponse(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("TMPDIR", tempDir)
+
+	storageErr := errors.New("object upload failed")
+	markErr := errors.New("database unavailable")
+	events := []string{}
+	uploader := &mockUploader{putErr: storageErr, events: &events}
+	fileStore := newDefaultMockFileStore()
+	fileStore.markFailedErr = markErr
+	fileStore.events = &events
+	publisher := &mockJobPublisher{events: &events}
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logOutput, nil))
+	h := upload.NewHandler(uploader, fileStore, publisher, "test-bucket", 100*1024*1024, logger)
+
+	req := newMultipartRequest(t, "file", "storage-failure.bin", "application/octet-stream", []byte(lifecycleUploadContent))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	assertStorageErrorResponse(t, w, storageErr)
+	if strings.Contains(w.Body.String(), markErr.Error()) {
+		t.Errorf("response contains MarkJobFailed error, want original storage error only: %s", w.Body.String())
+	}
+	if uploader.statCalls != 0 || uploader.putCalls != 1 || publisher.published {
+		t.Errorf("stat/put/published = %d/%d/%t, want 0/1/false", uploader.statCalls, uploader.putCalls, publisher.published)
+	}
+	assertEventOrder(t, events, []string{"create", "put", "mark_failed"})
+	assertJobFailureMarked(t, fileStore, "storage put failed: "+storageErr.Error())
+	if !strings.Contains(logOutput.String(), "failed to mark job as failed") ||
+		!strings.Contains(logOutput.String(), fileStore.jobRec.ID.String()) ||
+		!strings.Contains(logOutput.String(), markErr.Error()) {
+		t.Errorf("MarkJobFailed failure log lacks message, job context, or error: %s", logOutput.String())
 	}
 }
 
@@ -599,11 +780,25 @@ func assertUploadedContent(t *testing.T, uploader *mockUploader, publisher *mock
 
 func TestHandler_MQPublishFailure(t *testing.T) {
 	mock := &mockUploader{}
+	publishErr := errors.New("connection lost")
+	markErr := errors.New("database unavailable")
 	mockStore := newDefaultMockFileStore()
-	mockPub := &mockJobPublisher{publishErr: fmt.Errorf("connection lost")}
-	h := upload.NewHandler(mock, mockStore, mockPub, "test-bucket", 100*1024*1024, slog.Default())
+	mockStore.markFailedErr = markErr
+	marker := "mq-trace"
+	var cleanupCtx context.Context
+	mockStore.markFailed = func(ctx context.Context, _ uuid.UUID, _ string) {
+		cleanupCtx = ctx
+		assertCleanupContextAtCall(t, ctx, marker)
+	}
+	mockPub := &mockJobPublisher{publishErr: publishErr}
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logOutput, nil))
+	h := upload.NewHandler(mock, mockStore, mockPub, "test-bucket", 100*1024*1024, logger)
 
 	req := newMultipartRequest(t, "file", "test.exe", "application/octet-stream", []byte("data"))
+	requestCtx, cancelRequest := context.WithCancel(context.WithValue(req.Context(), cleanupContextValueKey{}, marker))
+	cancelRequest()
+	req = req.WithContext(requestCtx)
 	w := httptest.NewRecorder()
 
 	h.ServeHTTP(w, req)
@@ -611,19 +806,31 @@ func TestHandler_MQPublishFailure(t *testing.T) {
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusServiceUnavailable, w.Body.String())
 	}
-
 	var resp map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("parse response: %v", err)
 	}
 	errObj := resp["error"].(map[string]any)
-	if errObj["code"] != "QUEUE_PUBLISH_FAILED" {
-		t.Errorf("error.code = %q, want %q", errObj["code"], "QUEUE_PUBLISH_FAILED")
+	if errObj["code"] != "QUEUE_PUBLISH_FAILED" || errObj["message"] != "Failed to submit job to processing queue. Please try again." {
+		t.Errorf("queue error = %v, want unchanged QUEUE_PUBLISH_FAILED response", errObj)
 	}
-
-	// MarkJobFailed should have been called
-	if mockStore.markFailedCalls != 1 {
-		t.Errorf("markFailedCalls = %d, want 1", mockStore.markFailedCalls)
+	if strings.Contains(w.Body.String(), markErr.Error()) {
+		t.Errorf("response contains MarkJobFailed error, want original queue error only: %s", w.Body.String())
+	}
+	if !mockPub.published {
+		t.Error("publisher was not called")
+	}
+	assertJobFailureMarked(t, mockStore, "publish failed: "+publishErr.Error())
+	if cleanupCtx == nil {
+		t.Fatal("MarkJobFailed did not receive a cleanup context")
+	}
+	if err := cleanupCtx.Err(); err != context.Canceled {
+		t.Errorf("cleanup context err after helper returned = %v, want context.Canceled", err)
+	}
+	if !strings.Contains(logOutput.String(), "failed to mark job as failed") ||
+		!strings.Contains(logOutput.String(), mockStore.jobRec.ID.String()) ||
+		!strings.Contains(logOutput.String(), markErr.Error()) {
+		t.Errorf("MarkJobFailed failure log lacks message, job context, or error: %s", logOutput.String())
 	}
 }
 
@@ -765,5 +972,11 @@ func TestHandler_CreateRecordError(t *testing.T) {
 	errObj := resp["error"].(map[string]any)
 	if errObj["code"] != "INTERNAL_ERROR" {
 		t.Errorf("error.code = %q, want %q", errObj["code"], "INTERNAL_ERROR")
+	}
+	if mockStore.markFailedCalls != 0 {
+		t.Errorf("MarkJobFailed calls = %d, want 0 when record creation fails", mockStore.markFailedCalls)
+	}
+	if mock.statCalls != 0 || mock.putCalls != 0 || mockPub.published {
+		t.Errorf("storage stat/put/published = %d/%d/%t, want 0/0/false after record creation failure", mock.statCalls, mock.putCalls, mockPub.published)
 	}
 }
