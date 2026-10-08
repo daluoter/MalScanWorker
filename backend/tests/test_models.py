@@ -42,7 +42,9 @@ def test_job_model_creation():
     assert job.stages_total == 9
     assert job.stages_done == 0
     assert job.current_stage is None
-    assert Job.__table__.c.password_attempts.default.arg == 0
+    password_attempts = Job.__table__.c.password_attempts
+    assert password_attempts.default.arg == 0
+    assert str(password_attempts.server_default.arg) == "0"
     assert job.error_message is None
     assert job.result is None
 

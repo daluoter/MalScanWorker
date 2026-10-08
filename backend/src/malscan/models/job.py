@@ -40,7 +40,9 @@ class Job(Base):
     current_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     stages_done: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     stages_total: Mapped[int] = mapped_column(Integer, nullable=False, default=9)
-    password_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    password_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

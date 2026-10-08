@@ -118,6 +118,27 @@ async def _ensure_schema_compatibility(conn: AsyncConnection) -> None:
 
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_jobs_artifact_id ON jobs (artifact_id)"))
 
+    needs_password_attempts_default = (
+        await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'jobs'
+                  AND column_name = 'password_attempts'
+                  AND column_default IS NULL
+                """
+            )
+        )
+    ).scalar_one_or_none()
+
+    if needs_password_attempts_default:
+        await conn.execute(
+            text("ALTER TABLE public.jobs ALTER COLUMN password_attempts SET DEFAULT 0")
+        )
+        log.warning("schema_repair_applied", change="jobs.password_attempts default set to 0")
+
     for column_name in ("risk_level", "policy_version"):
         has_column = (
             await conn.execute(

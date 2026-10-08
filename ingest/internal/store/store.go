@@ -114,8 +114,8 @@ func (s *Store) CreateFileAndJob(
 	err = tx.QueryRow(ctx,
 		`INSERT INTO jobs (id, file_id, status, stages_total, parent_job_id, depth,
 		                    stages_done, total_sub, completed_sub, malicious_sub,
-		                    created_at, updated_at)
-		 VALUES ($1, $2, 'queued', $3, $4, $5, 0, 0, 0, 0, $6, $7)
+		                    password_attempts, created_at, updated_at)
+		 VALUES ($1, $2, 'queued', $3, $4, $5, 0, 0, 0, 0, 0, $6, $7)
 		 RETURNING id, created_at`,
 		jobID, fRec.ID, s.stagesTotal, parentJobID, depth, now, now,
 	).Scan(&jRec.ID, &jRec.CreatedAt)

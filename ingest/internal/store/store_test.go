@@ -102,6 +102,27 @@ func testLogger() *slog.Logger {
 	return slog.Default()
 }
 
+func assertJobInsertSuppliesZeroPasswordAttempts(t *testing.T, calls []sqlCall) {
+	t.Helper()
+
+	for _, call := range calls {
+		if !strings.Contains(call.SQL, "INSERT INTO jobs") {
+			continue
+		}
+
+		normalizedSQL := strings.Join(strings.Fields(call.SQL), " ")
+		if !strings.Contains(normalizedSQL, "malicious_sub, password_attempts, created_at, updated_at") {
+			t.Fatalf("job INSERT does not include password_attempts: %s", normalizedSQL)
+		}
+		if !strings.Contains(normalizedSQL, "0, 0, 0, 0, 0, $6, $7") {
+			t.Fatalf("job INSERT does not place literal zero before timestamp parameters: %s", normalizedSQL)
+		}
+		return
+	}
+
+	t.Fatal("job INSERT was not executed")
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: CreateFileAndJob — new file
 // ---------------------------------------------------------------------------
@@ -174,6 +195,8 @@ func TestCreateFileAndJob_NewFile(t *testing.T) {
 		t.Errorf("job CreatedAt = %v, want %v", jRec.CreatedAt, now)
 	}
 
+	assertJobInsertSuppliesZeroPasswordAttempts(t, tx.calls)
+
 	// Transaction committed
 	if !tx.committed {
 		t.Error("expected transaction to be committed")
@@ -243,6 +266,7 @@ func TestCreateFileAndJob_DuplicateFile(t *testing.T) {
 	if jRec.FileID != existingFileID {
 		t.Errorf("job FileID = %v, want %v", jRec.FileID, existingFileID)
 	}
+	assertJobInsertSuppliesZeroPasswordAttempts(t, tx.calls)
 }
 
 // ---------------------------------------------------------------------------
